@@ -57,4 +57,5 @@ from .ui import (set_guess, get_reader, read, get_writer, write)
 
 from .version import version as __version__
 
+from .besancon import BesanconFixed
 from . import connect
