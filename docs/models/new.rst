@@ -33,11 +33,11 @@ As a minimum the __init__ method takes all parameters and the number of
 parameter sets, `~astropy.models.Model.param_dim`::
 
     def __init__(self, amplitude, mean, stddev, param_dim=1):
-        self.linear = False
         self._amplitude = Parameter(name='amplitude', val=amplitude, mclass=self, param_dim=param_dim)
         self._stddev = Parameter(name='stddev', val=stddev, mclass=self, param_dim=param_dim)
         self._mean = Parameter(name='mean', val=mean, mclass=self, param_dim=param_dim)
         ParametricModel.__init__(self, self.param_names, ndim=1, outdim=1, param_dim=param_dim)
+        self.linear = False
     
 Parametric models can be linear or nonlinear in a regression sense. The default 
 value of the `~astropy.models.core.Model.linear` attribute is True. 
