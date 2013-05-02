@@ -55,7 +55,7 @@ called "deriv",  to compute its derivatives. The evaluation method takes all
 input coordinates as separate arguments and a parameter set. For this example::
 
     def eval(self, x, params):
-        return params[0] * np.exp((-(1/(2*params[2]**2)) * (x-params[1])**2))
+        return params[0] * np.exp((-(1/(2.*params[2]**2)) * (x-params[1])**2))
                                                 
 
 The "deriv" method takes as input all coordinates as separate arguments.
