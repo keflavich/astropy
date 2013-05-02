@@ -55,7 +55,7 @@ called "deriv",  to compute its derivatives. The evaluation method takes all
 input coordinates as separate arguments and a parameter set. For this example::
 
     def eval(self, x, params):
-        return params[0] * np.exp((-(1/(params[2]**2)) * (x-params[1])**2))
+        return params[0] * np.exp((-(1/(2*params[2]**2)) * (x-params[1])**2))
                                                 
 
 The "deriv" method takes as input all coordinates as separate arguments.
@@ -111,7 +111,7 @@ Creating a New Type of Fitter
 *****************************
 
 This document describes how to add a new nonlinear fitting algorithm
-to this package. In short, one needs to define an error function and a __call__
+to this package. In short, one needs to define an error function and a `__call__`
 method and define the types of constraints which work with this fitter (if any).
 
 The details are described below using scipy's SLSQP algorithm as an example.
@@ -126,7 +126,7 @@ The base class for all fitters is `~astropy.models.fitting.Fitter`.::
                 raise ModelLinearityException('Model is linear in parameters, '
                              'non-linear fitting methods should not be used.')
 
-All fitters take a model (their __call__ method modifies the model's parameters).
+All fitters take a model (their `__call__` method modifies the model's parameters).
 If the fitter does not support constraint fitting, this may be the only argument 
 passed to the constructor. In our example the rest of the arguments represent 
 different types of constraints.
@@ -142,7 +142,7 @@ squared residuals is used as a measure of fitting.::
         res = self.model(*args[1:]) - meas
         return np.sum(res**2)
     
-The __call__ method performs the fitting. As a minimum it takes all coordinates 
+The `__call__` method performs the fitting. As a minimum it takes all coordinates 
 as separate arguments. Additional arguments are passed as necessary.::
 
     def __call__(self, x, y , maxiter=MAXITER, epsilon=EPS):
