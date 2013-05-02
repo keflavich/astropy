@@ -60,7 +60,20 @@ input coordinates as separate arguments and a parameter set. For this example::
 
 The "deriv" method takes as input all coordinates as separate arguments.
 There is an option to compute numerical derivatives for nonlinear models
-in which case the "deriv" method should be ``None``.
+in which case the "deriv" method should be ``None``.  The "deriv" method
+must also accept a dummy variable for compatibility with `scipy.optimize`::
+
+    def gderiv(self, p, x, dummy):
+        amplitude, mean, stddev = p
+        deriv_dict = {}
+        deriv_dict['amplitude'] = np.exp((-(1/(stddev**2)) * (x-mean)**2))
+        deriv_dict['mean'] = 2 * amplitude * np.exp((-(1/(stddev**2)) *
+                                (x-mean)**2)) * (x-mean)/(stddev**2)
+        deriv_dict['stddev'] = 2 * amplitude * np.exp((-(1/(stddev**2)) *
+                                (x-mean)**2)) * ((x-mean)**2)/(stddev**3)
+        derivval = [deriv_dict[par] for par in self.param_names]
+        return np.array(derivval).T
+
 
 Finally, the ``__call__`` method takes input coordinates as separate arguments.
 It reformats them (if necessary) and calls the eval method to perform the 
