@@ -98,10 +98,10 @@ A Full Example of a LineModel
         param_names = ['slope', 'intercept']
     
     def init(self, slope, intercept, param_dim=1):
-        self.linear = True 
         self._slope = parameters.Parameter(name='slope', val=slope, mclass=self, param_dim=param_dim)
         self._intercept = parameters.Parameter(name='intercept', val=intercept, mclass=self, param_dim=param_dim)
         models.ParametricModel.__init__(self, self.param_names, ndim=1, outdim=1, param_dim=param_dim)
+        self.linear = True 
         self.domain = [-1, 1]
         self.window = [-1, 1]
         self._order = 2
