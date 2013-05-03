@@ -20,7 +20,7 @@ named `~astropy.models.core.Model.param_names`. Pass the list of parameter
 names and the number of parameter sets to the base class. Note, that if
 the method which evaluates the model cannot work with multiple parameter sets,
 `~astropy.models.core.Model.param_dim` should not be given
-as an argument in the __init__ method. The default for
+as an argument in the ``__init__`` method. The default for
 `~astropy.models.core.Model.param_dim` is set in the base class to 1.::
 
     from astropy.models import *
@@ -36,7 +36,7 @@ parameter sets, `~astropy.models.Model.param_dim`::
         self._amplitude = Parameter(name='amplitude', val=amplitude, mclass=self, param_dim=param_dim)
         self._stddev = Parameter(name='stddev', val=stddev, mclass=self, param_dim=param_dim)
         self._mean = Parameter(name='mean', val=mean, mclass=self, param_dim=param_dim)
-        ParametricModel.__init__(self, self.param_names, ndim=1, outdim=1, param_dim=param_dim)
+        super(ParametricModel,self).__init__(self, self.param_names, ndim=1, outdim=1, param_dim=param_dim)
         self.linear = False
     
 Parametric models can be linear or nonlinear in a regression sense. The default 
@@ -100,7 +100,7 @@ A Full Example of a LineModel
     def init(self, slope, intercept, param_dim=1):
         self._slope = parameters.Parameter(name='slope', val=slope, mclass=self, param_dim=param_dim)
         self._intercept = parameters.Parameter(name='intercept', val=intercept, mclass=self, param_dim=param_dim)
-        models.ParametricModel.__init__(self, self.param_names, ndim=1, outdim=1, param_dim=param_dim)
+        super(models.ParametricModel,self).__init__(self, self.param_names, ndim=1, outdim=1, param_dim=param_dim)
         self.linear = True 
         self.domain = [-1, 1]
         self.window = [-1, 1]
@@ -133,7 +133,7 @@ The base class for all fitters is `~astropy.models.fitting.Fitter`.::
     class SLSQPFitter(Fitter):
         def __init__(self, model, fixed=None, tied=None, bounds=None,
                             eqcons=None, ineqcons=None):
-            Fitter.__init__(self, model, fixed=fixed, tied=tied, bounds=bounds, 
+            super(Fitter,self).__init__(self, model, fixed=fixed, tied=tied, bounds=bounds, 
                                       eqcons=eqcons, ineqcons=ineqcons)
             if self.model.linear:
                 raise ModelLinearityException('Model is linear in parameters, '
