@@ -28,8 +28,9 @@ values are kept in sync. Single parameters are updated through properties. An up
 a single parameter triggers an update to `~astropy.models.core.Model.param_sets` and
 `~astropy.models.core.Model.parameters`. Single parameters are updated 
 after a change to `~astropy.models.core.ParametricModel.parameters`.
-`~astropy.models.core.Model.param_sets` are always constructed on demand from single 
-parameters and cannot be updated directly.
+`~astropy.models.core.Model.param_sets` are always constructed on demand from
+single parameters and cannot be updated directly; this means their shape, once instantiated,
+cannot be changed.
 
 Parameters Examples
 -------------------
