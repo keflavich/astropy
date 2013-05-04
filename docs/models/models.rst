@@ -38,6 +38,23 @@ theoretically infinetely complex models, a mechanism to map input data to models
 is needed. In this case the input may be wrapped in a
 `~astropy.models.core.LabeledInput` object - a dict like object whose items are {label: data} pairs.
 
+Once a `Model` is instantiated, its dimensionality cannot be changed.  Specifically:
+
+    * `model.param_names` cannot be changed.
+    * The value of `model.parameters` can be changed but not the size.  This
+      change triggers a change in the individual parameters
+    * ``model.par1``, ``model.par2`` ,i.e. individual parameters, can be updated
+      (by a user), which will change `model.parameters`.
+    * ``param_dim`` cannot be changed after initialization
+    * ``param_sets`` cannot be changed: they are always constructed from the
+      current individual parameters. 
+
+The goal is to keep individual parameters, model.parameters and model.parm_sets
+always in sync. Errors like 
+``InputParameterError: Expected the list of parameters to be the same length as the initial list.``
+will be raised if the parameter dimensions are changed when they should not be.
+
+
 Models Examples
 ---------------
 
