@@ -13,8 +13,8 @@ def prereleaser_middle(data):
     the format.
     """
 
-    if data['name'] != 'astropy':
-        return
+    #if data['name'] != 'astropy':
+    #    return
 
     _update_setup_py_version(data['new_version'])
 
@@ -28,8 +28,8 @@ def releaser_middle(data):
     but we don't care about Python 2.4.
     """
 
-    if data['name'] != 'astropy':
-        return
+    #if data['name'] != 'astropy':
+    #    return
 
     import os
     import sys
@@ -108,8 +108,8 @@ def postreleaser_before(data):
     <version>.dev without the mysterious 0.
     """
 
-    if data['name'] != 'astropy':
-        return
+    #if data['name'] != 'astropy':
+    #    return
 
     data['dev_version_template'] = '%(new_version)s.dev'
 
