@@ -599,3 +599,6 @@ class SphericalCoordinatesBase(object):
                         self.latangle.to_string(**latargs))
 
         return coord_string
+
+    def __format__(self, format_spec):
+        return self.to_string(style=format_spec)
