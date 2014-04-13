@@ -18,10 +18,11 @@ def check_internet_off(original_function):
     def new_function(*args, **kwargs):
         if isinstance(args[0], socket.socket):
             host = args[1][0]
-            valid_hosts = ('localhost', '127.0.0.1', '::1')
+            valid_hosts = ('localhost', '127.0.0.1', socket.gethostname(),
+                           '::1')
         else:
             host = args[0][0]
-            valid_hosts = ('localhost', '127.0.0.1')
+            valid_hosts = ('localhost', '127.0.0.1', socket.gethostname())
         if any([h in host for h in valid_hosts]):
             return original_function(*args, **kwargs)
         else:
