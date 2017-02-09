@@ -184,7 +184,8 @@ def convolve(array, kernel, boundary='fill', fill_value=0.,
         raise Exception("The kernel can't be normalized, because its sum is "
                         "close to zero. The sum of the given kernel is < {0}"
                         .format(1. / MAX_NORMALIZATION))
-    kernel_internal /= kernel_sum
+    if normalize_kernel:
+        kernel_internal /= kernel_sum
 
     if array_internal.ndim == 0:
         raise Exception("cannot convolve 0-dimensional arrays")
