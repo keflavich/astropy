@@ -8,126 +8,77 @@ latex.py:
 :Author: Tom Aldcroft (aldcroft@head.cfa.harvard.edu)
 """
 
-##
-## Redistribution and use in source and binary forms, with or without
-## modification, are permitted provided that the following conditions are met:
-##     * Redistributions of source code must retain the above copyright
-##       notice, this list of conditions and the following disclaimer.
-##     * Redistributions in binary form must reproduce the above copyright
-##       notice, this list of conditions and the following disclaimer in the
-##       documentation and/or other materials provided with the distribution.
-##     * Neither the name of the Smithsonian Astrophysical Observatory nor the
-##       names of its contributors may be used to endorse or promote products
-##       derived from this software without specific prior written permission.
-##
-## THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-## ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-## WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-## DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
-## DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-## (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-## LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-## ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-## (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-## SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import re
+
 from . import core
 
-latexdicts ={'AA':  {'tabletype': 'table',
-                 'header_start': r'\hline \hline', 'header_end': r'\hline',
-                 'data_end': r'\hline'},
-             'doublelines': {'tabletype': 'table',
-                 'header_start': r'\hline \hline', 'header_end': r'\hline\hline',
-                 'data_end': r'\hline\hline'},
-             'template': {'tabletype': 'tabletype', 'caption': 'caption',
-                          'col_align': 'col_align', 'preamble': 'preamble',
-                          'header_start': 'header_start',
-                          'header_end': 'header_end', 'data_start': 'data_start',
-                          'data_end': 'data_end', 'tablefoot': 'tablefoot',
-                          'units': {'col1': 'unit of col1', 'col2': 'unit of col2'}}
-             }
+latexdicts = {'AA': {'tabletype': 'table',
+                     'header_start': r'\hline \hline', 'header_end': r'\hline',
+                     'data_end': r'\hline'},
+              'doublelines': {'tabletype': 'table',
+                              'header_start': r'\hline \hline', 'header_end': r'\hline\hline',
+                              'data_end': r'\hline\hline'},
+              'template': {'tabletype': 'tabletype', 'caption': 'caption',
+                           'tablealign': 'tablealign',
+                           'col_align': 'col_align', 'preamble': 'preamble',
+                           'header_start': 'header_start',
+                           'header_end': 'header_end', 'data_start': 'data_start',
+                           'data_end': 'data_end', 'tablefoot': 'tablefoot',
+                           'units': {'col1': 'unit of col1', 'col2': 'unit of col2'}}
+              }
+
+
+RE_COMMENT = re.compile(r'(?<!\\)%')  # % character but not \%
+
 
 def add_dictval_to_list(adict, key, alist):
-    '''add a value from a dictionary to a list
-
-    :param adict: dictionary
-    :param key: key of value
-    :param list: list where value should be added
     '''
-    if key in adict.keys():
-        if type(adict[key]) == str:
+    Add a value from a dictionary to a list
+
+    Parameters
+    ----------
+    adict : dictionary
+    key : hashable
+    alist : list
+        List where value should be added
+    '''
+    if key in adict:
+        if isinstance(adict[key], str):
             alist.append(adict[key])
         else:
             alist.extend(adict[key])
 
-def find_latex_line(lines, latex):
-    '''Find the first line which matches a patters
 
-    :param lines: list of strings
-    :param latex: search pattern
-    :returns: line number or None, if no match was found
+def find_latex_line(lines, latex):
+    '''
+    Find the first line which matches a patters
+
+    Parameters
+    ----------
+    lines : list
+        List of strings
+    latex : str
+        Search pattern
+
+    Returns
+    -------
+    line_num : int, None
+        Line number. Returns None, if no match was found
+
     '''
     re_string = re.compile(latex.replace('\\', '\\\\'))
-    for i,line in enumerate(lines):
+    for i, line in enumerate(lines):
         if re_string.match(line):
             return i
     else:
         return None
 
 
-class LatexHeader(core.BaseHeader):
-    header_start = r'\begin{tabular}'
+class LatexInputter(core.BaseInputter):
 
-    def start_line(self, lines):
-        line = find_latex_line(lines, self.header_start)
-        if line:
-            return line + 1
-        else:
-            return None
-
-    def write(self, lines):
-        if not 'col_align' in self.latex.keys():
-            self.latex['col_align'] = len(self.cols) * 'c'
-
-        lines.append(r'\begin{' + self.latex['tabletype'] + r'}')
-        add_dictval_to_list(self.latex, 'preamble', lines)
-        if 'caption' in self.latex.keys():
-            lines.append(r'\caption{' + self.latex['caption'] +'}')
-        lines.append(self.header_start + r'{' + self.latex['col_align'] + r'}')
-        add_dictval_to_list(self.latex, 'header_start', lines)
-        lines.append(self.splitter.join([x.name for x in self.cols]))
-        if 'units' in self.latex.keys():
-            lines.append(self.splitter.join([self.latex['units'].get(x.name, ' ')
-                                             for x in self.cols]))
-        add_dictval_to_list(self.latex, 'header_end', lines)
-
-
-
-class LatexData(core.BaseData):
-    data_start = None
-    data_end = r'\end{tabular}'
-
-    def start_line(self, lines):
-        if self.data_start:
-            return find_latex_line(lines, self.data_start)
-        else:
-            return self.header.start_line(lines) + 1
-
-    def end_line(self, lines):
-        if self.data_end:
-            return find_latex_line(lines, self.data_end)
-        else:
-            return None
-
-    def write(self, lines):
-        add_dictval_to_list(self.latex, 'data_start', lines)
-        core.BaseData.write(self, lines)
-        add_dictval_to_list(self.latex, 'data_end', lines)
-        lines.append(self.data_end)
-        add_dictval_to_list(self.latex, 'tablefoot', lines)
-        lines.append(r'\end{' + self.latex['tabletype'] + '}')
-
+    def process_lines(self, lines):
+        return [lin.strip() for lin in lines]
 
 
 class LatexSplitter(core.BaseSplitter):
@@ -135,13 +86,20 @@ class LatexSplitter(core.BaseSplitter):
     '''
     delimiter = '&'
 
+    def __call__(self, lines):
+        last_line = RE_COMMENT.split(lines[-1])[0].strip()
+        if not last_line.endswith(r'\\'):
+            lines[-1] = last_line + r'\\'
+
+        return super().__call__(lines)
+
     def process_line(self, line):
         """Remove whitespace at the beginning or end of line. Also remove
         \\ at end of line"""
-        line = line.split('%')[0]
+        line = RE_COMMENT.split(line)[0]
         line = line.strip()
-        if line[-2:] ==r'\\':
-            line = line.strip(r'\\')
+        if line.endswith(r'\\'):
+            line = line.rstrip(r'\\')
         else:
             raise core.InconsistentTableError(r'Lines in LaTeX table have to end with \\')
         return line
@@ -158,8 +116,86 @@ class LatexSplitter(core.BaseSplitter):
         delimiter = ' ' + self.delimiter + ' '
         return delimiter.join(x.strip() for x in vals) + r' \\'
 
+
+class LatexHeader(core.BaseHeader):
+    '''Class to read the header of Latex Tables'''
+    header_start = r'\begin{tabular}'
+    splitter_class = LatexSplitter
+
+    def start_line(self, lines):
+        line = find_latex_line(lines, self.header_start)
+        if line is not None:
+            return line + 1
+        else:
+            return None
+
+    def _get_units(self):
+        units = {}
+        col_units = [col.info.unit for col in self.cols]
+        for name, unit in zip(self.colnames, col_units):
+            if unit:
+                try:
+                    units[name] = unit.to_string(format='latex_inline')
+                except AttributeError:
+                    units[name] = unit
+        return units
+
+    def write(self, lines):
+        if 'col_align' not in self.latex:
+            self.latex['col_align'] = len(self.cols) * 'c'
+        if 'tablealign' in self.latex:
+            align = '[' + self.latex['tablealign'] + ']'
+        else:
+            align = ''
+        if self.latex['tabletype'] is not None:
+            lines.append(r'\begin{' + self.latex['tabletype'] + r'}' + align)
+        add_dictval_to_list(self.latex, 'preamble', lines)
+        if 'caption' in self.latex:
+            lines.append(r'\caption{' + self.latex['caption'] + '}')
+        lines.append(self.header_start + r'{' + self.latex['col_align'] + r'}')
+        add_dictval_to_list(self.latex, 'header_start', lines)
+        lines.append(self.splitter.join(self.colnames))
+        units = self._get_units()
+        if 'units' in self.latex:
+            units.update(self.latex['units'])
+        if units:
+            lines.append(self.splitter.join([units.get(name, ' ') for name in self.colnames]))
+        add_dictval_to_list(self.latex, 'header_end', lines)
+
+
+class LatexData(core.BaseData):
+    '''Class to read the data in LaTeX tables'''
+    data_start = None
+    data_end = r'\end{tabular}'
+    splitter_class = LatexSplitter
+
+    def start_line(self, lines):
+        if self.data_start:
+            return find_latex_line(lines, self.data_start)
+        else:
+            start = self.header.start_line(lines)
+            if start is None:
+                raise core.InconsistentTableError(r'Could not find table start')
+            return start + 1
+
+    def end_line(self, lines):
+        if self.data_end:
+            return find_latex_line(lines, self.data_end)
+        else:
+            return None
+
+    def write(self, lines):
+        add_dictval_to_list(self.latex, 'data_start', lines)
+        core.BaseData.write(self, lines)
+        add_dictval_to_list(self.latex, 'data_end', lines)
+        lines.append(self.data_end)
+        add_dictval_to_list(self.latex, 'tablefoot', lines)
+        if self.latex['tabletype'] is not None:
+            lines.append(r'\end{' + self.latex['tabletype'] + '}')
+
+
 class Latex(core.BaseReader):
-    r'''Write and read LaTeX tables.
+    r'''LaTeX format table.
 
     This class implements some LaTeX specific commands.  Its main
     purpose is to write out a table in a form that LaTeX can compile. It
@@ -196,6 +232,13 @@ class Latex(core.BaseReader):
                 ascii.write(data, sys.stdout, Writer = ascii.Latex,
                             latexdict = {'tabletype': 'table*'})
 
+            If ``None``, the table environment will be dropped, keeping only
+            the ``tabular`` environment.
+
+        * tablealign : positioning of table in text.
+            The default is not to specify a position preference in the text.
+            If, e.g. the alignment is ``ht``, then the LaTeX will be ``\\begin{table}[ht]``.
+
         * col_align : Alignment of columns
             If not present all columns will be centered.
 
@@ -221,8 +264,9 @@ class Latex(core.BaseReader):
               ascii.write(data, Writer=ascii.Latex,
                                latexdict = {'units': {'mass': 'kg', 'speed': 'km/h'}})
 
-            If the column has no entry in the `units` dictionary, it defaults
-            to `' '`.
+            If the column has no entry in the ``units`` dictionary, it defaults
+            to the **unit** attribute of the column. If this attribute is not
+            specified (i.e. it is None), the unit will be written as ``' '``.
 
         Run the following code to see where each element of the
         dictionary is inserted in the LaTeX table::
@@ -257,32 +301,38 @@ class Latex(core.BaseReader):
             latexdict['col_align'] = col_align
 
     '''
+    _format_name = 'latex'
+    _io_registry_format_aliases = ['latex']
+    _io_registry_suffix = '.tex'
+    _description = 'LaTeX table'
 
-    def __init__(self, ignore_latex_commands = ['hline', 'vspace', 'tableline'], latexdict = {}, caption ='', col_align = None):
+    header_class = LatexHeader
+    data_class = LatexData
+    inputter_class = LatexInputter
 
-        core.BaseReader.__init__(self)
-        self.header = LatexHeader()
-        self.data = LatexData()
+    def __init__(self,
+                 ignore_latex_commands=['hline', 'vspace', 'tableline',
+                                        'toprule', 'midrule', 'bottomrule'],
+                 latexdict={}, caption='', col_align=None):
 
-        self.header.splitter = LatexSplitter()
-        self.data.splitter = LatexSplitter()
-        self.data.header = self.header
-        self.header.data = self.data
+        super().__init__()
+
         self.latex = {}
-        self.latex['tabletype'] = 'table'
         # The latex dict drives the format of the table and needs to be shared
         # with data and header
         self.header.latex = self.latex
         self.data.latex = self.latex
         self.latex['tabletype'] = 'table'
         self.latex.update(latexdict)
-        if caption: self.latex['caption'] = caption
-        if col_align: self.latex['col_align'] = col_align
+        if caption:
+            self.latex['caption'] = caption
+        if col_align:
+            self.latex['col_align'] = col_align
 
         self.ignore_latex_commands = ignore_latex_commands
-        self.header.comment = '%|' + '|'.join([r'\\' + command for command in self.ignore_latex_commands])
+        self.header.comment = '%|' + '|'.join(
+            [r'\\' + command for command in self.ignore_latex_commands])
         self.data.comment = self.header.comment
-
 
     def write(self, table=None):
         self.header.start_line = None
@@ -290,32 +340,70 @@ class Latex(core.BaseReader):
         return core.BaseReader.write(self, table=table)
 
 
+class AASTexHeaderSplitter(LatexSplitter):
+    r'''Extract column names from a `deluxetable`_.
+
+    This splitter expects the following LaTeX code **in a single line**:
+
+        \tablehead{\colhead{col1} & ... & \colhead{coln}}
+    '''
+
+    def __call__(self, lines):
+        return super(LatexSplitter, self).__call__(lines)
+
+    def process_line(self, line):
+        """extract column names from tablehead
+        """
+        line = line.split('%')[0]
+        line = line.replace(r'\tablehead', '')
+        line = line.strip()
+        if (line[0] == '{') and (line[-1] == '}'):
+            line = line[1:-1]
+        else:
+            raise core.InconsistentTableError(r'\tablehead is missing {}')
+        return line.replace(r'\colhead', '')
+
+    def join(self, vals):
+        return ' & '.join([r'\colhead{' + str(x) + '}' for x in vals])
+
+
 class AASTexHeader(LatexHeader):
-    '''In a `deluxetable` some header keywords differ from standard LaTeX.
+    r'''In a `deluxetable
+    <http://fits.gsfc.nasa.gov/standard30/deluxetable.sty>`_ some header
+    keywords differ from standard LaTeX.
 
     This header is modified to take that into account.
     '''
     header_start = r'\tablehead'
+    splitter_class = AASTexHeaderSplitter
 
     def start_line(self, lines):
         return find_latex_line(lines, r'\tablehead')
 
     def write(self, lines):
-        if not 'col_align' in self.latex.keys():
+        if 'col_align' not in self.latex:
             self.latex['col_align'] = len(self.cols) * 'c'
-
-        lines.append(r'\begin{' + self.latex['tabletype'] + r'}{' + self.latex['col_align'] + r'}')
+        if 'tablealign' in self.latex:
+            align = '[' + self.latex['tablealign'] + ']'
+        else:
+            align = ''
+        lines.append(r'\begin{' + self.latex['tabletype'] + r'}{' + self.latex['col_align'] + r'}'
+                     + align)
         add_dictval_to_list(self.latex, 'preamble', lines)
-        if 'caption' in self.latex.keys():
-            lines.append(r'\tablecaption{' + self.latex['caption'] +'}')
-        tablehead = ' & '.join([r'\colhead{' + x.name + '}' for x in self.cols])
-        if 'units' in self.latex.keys():
-            tablehead += r'\\ ' + (self.splitter.join([ self.latex['units'].get(x.name, ' ') for x in self.cols]))
+        if 'caption' in self.latex:
+            lines.append(r'\tablecaption{' + self.latex['caption'] + '}')
+        tablehead = ' & '.join([r'\colhead{' + name + '}' for name in self.colnames])
+        units = self._get_units()
+        if 'units' in self.latex:
+            units.update(self.latex['units'])
+        if units:
+            tablehead += r'\\ ' + self.splitter.join([units.get(name, ' ')
+                                                      for name in self.colnames])
         lines.append(r'\tablehead{' + tablehead + '}')
 
 
 class AASTexData(LatexData):
-    '''In a `deluxetable` the data is enclosed in `\startdata` and `\enddata`
+    r'''In a `deluxetable`_ the data is enclosed in `\startdata` and `\enddata`
     '''
     data_start = r'\startdata'
     data_end = r'\enddata'
@@ -325,37 +413,21 @@ class AASTexData(LatexData):
 
     def write(self, lines):
         lines.append(self.data_start)
+        lines_length_initial = len(lines)
         core.BaseData.write(self, lines)
+        # To remove extra space(s) and // appended which creates an extra new line
+        # in the end.
+        if len(lines) > lines_length_initial:
+            # we compile separately because py2.6 doesn't have a flags keyword in re.sub
+            re_final_line = re.compile(r'\s* \\ \\ \s* $', flags=re.VERBOSE)
+            lines[-1] = re.sub(re_final_line, '', lines[-1])
         lines.append(self.data_end)
         add_dictval_to_list(self.latex, 'tablefoot', lines)
         lines.append(r'\end{' + self.latex['tabletype'] + r'}')
 
-class AASTexHeaderSplitter(LatexSplitter):
-    '''extract column names from a `deluxetable`
-
-    This splitter expects the following LaTeX code **in a single line**:
-
-        \tablehead{\colhead{col1} & ... & \colhead{coln}}
-    '''
-    def process_line(self, line):
-        """extract column names from tablehead
-        """
-        line = line.split('%')[0]
-        line = line.replace(r'\tablehead','')
-        line = line.strip()
-        if (line[0] =='{') and (line[-1] == '}'):
-            line = line[1:-1]
-        else:
-            raise core.InconsistentTableError(r'\tablehead is missing {}')
-        return line.replace(r'\colhead','')
-
-    def join(self, vals):
-        return ' & '.join([r'\colhead{' + str(x) + '}' for x in vals])
-
-
 
 class AASTex(Latex):
-    '''Write and read AASTeX tables.
+    '''AASTeX format table.
 
     This class implements some AASTeX specific commands.
     AASTeX is used for the AAS (American Astronomical Society)
@@ -366,18 +438,16 @@ class AASTex(Latex):
     ``data_start`` and ``data_end`` in ``latexdict`` have no effect.
     '''
 
+    _format_name = 'aastex'
+    _io_registry_format_aliases = ['aastex']
+    _io_registry_suffix = ''  # AASTex inherits from Latex, so override this class attr
+    _description = 'AASTeX deluxetable used for AAS journals'
+
+    header_class = AASTexHeader
+    data_class = AASTexData
+
     def __init__(self, **kwargs):
-        Latex.__init__(self, **kwargs)
-        self.header = AASTexHeader()
-        self.data = AASTexData()
-        self.header.comment = '%|' + '|'.join([r'\\' + command for command in self.ignore_latex_commands])
-        self.header.splitter = AASTexHeaderSplitter()
-        self.data.splitter = LatexSplitter()
-        self.data.comment = self.header.comment
-        self.data.header = self.header
-        self.header.data = self.data
-        self.latex['tabletype'] = 'deluxetable'
-        # The latex dict drives the format of the table and needs to be shared
-        # with data and header
-        self.header.latex = self.latex
-        self.data.latex = self.latex
+        super().__init__(**kwargs)
+        # check if tabletype was explicitly set by the user
+        if not (('latexdict' in kwargs) and ('tabletype' in kwargs['latexdict'])):
+            self.latex['tabletype'] = 'deluxetable'

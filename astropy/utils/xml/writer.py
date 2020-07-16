@@ -8,27 +8,31 @@ nicely-indented XML.
 import contextlib
 import textwrap
 
+try:
+    from . import _iterparser
+except ImportError:
+    def xml_escape_cdata(s):
+        """
+        Escapes &, < and > in an XML CDATA string.
+        """
+        s = s.replace("&", "&amp;")
+        s = s.replace("<", "&lt;")
+        s = s.replace(">", "&gt;")
+        return s
 
-def xml_escape_cdata(s):
-    """
-    Escapes &, < and > in an XML CDATA string.
-    """
-    s = s.replace(u"&", u"&amp;")
-    s = s.replace(u"<", u"&lt;")
-    s = s.replace(u">", u"&gt;")
-    return s
-
-
-def xml_escape(s):
-    """
-    Escapes &, ', ", < and > in an XML attribute value.
-    """
-    s = s.replace(u"&", u"&amp;")
-    s = s.replace(u"'", u"&apos;")
-    s = s.replace(u"\"", u"&quot;")
-    s = s.replace(u"<", u"&lt;")
-    s = s.replace(u">", u"&gt;")
-    return s
+    def xml_escape(s):
+        """
+        Escapes &, ', ", < and > in an XML attribute value.
+        """
+        s = s.replace("&", "&amp;")
+        s = s.replace("'", "&apos;")
+        s = s.replace("\"", "&quot;")
+        s = s.replace("<", "&lt;")
+        s = s.replace(">", "&gt;")
+        return s
+else:
+    xml_escape_cdata = _iterparser.escape_xml_cdata
+    xml_escape = _iterparser.escape_xml
 
 
 class XMLWriter:
@@ -63,15 +67,10 @@ class XMLWriter:
         self._open = 0  # true if start tag is open
         self._tags = []
         self._data = []
-        self._indentation = u" " * 64
+        self._indentation = " " * 64
 
-        try:
-            from . import _iterparser
-            self.xml_escape_cdata = _iterparser.escape_xml_cdata
-            self.xml_escape = _iterparser.escape_xml
-        except ImportError:
-            self.xml_escape_cdata = xml_escape_cdata
-            self.xml_escape = xml_escape
+        self.xml_escape_cdata = xml_escape_cdata
+        self.xml_escape = xml_escape
 
     def _flush(self, indent=True, wrap=False):
         """
@@ -79,21 +78,21 @@ class XMLWriter:
         """
         if self._open:
             if indent:
-                self.write(u">\n")
+                self.write(">\n")
             else:
-                self.write(u">")
+                self.write(">")
             self._open = 0
         if self._data:
-            data = u''.join(self._data)
+            data = ''.join(self._data)
             if wrap:
                 indent = self.get_indentation_spaces(1)
                 data = textwrap.fill(
                     data,
                     initial_indent=indent,
                     subsequent_indent=indent)
-                self.write(u'\n')
+                self.write('\n')
                 self.write(self.xml_escape_cdata(data))
-                self.write(u'\n')
+                self.write('\n')
                 self.write(self.get_indentation_spaces())
             else:
                 self.write(self.xml_escape_cdata(data))
@@ -127,30 +126,95 @@ class XMLWriter:
         self._data = []
         self._tags.append(tag)
         self.write(self.get_indentation_spaces(-1))
-        self.write(u"<%s" % tag)
+        self.write(f"<{tag}")
         if attrib or extra:
             attrib = attrib.copy()
             attrib.update(extra)
-            attrib = attrib.items()
+            attrib = list(attrib.items())
             attrib.sort()
             for k, v in attrib:
                 if v is not None:
                     # This is just busy work -- we know our keys are clean
                     # k = xml_escape_cdata(k)
                     v = self.xml_escape(v)
-                    self.write(u" %s=\"%s\"" % (k, v))
+                    self.write(f" {k}=\"{v}\"")
         self._open = 1
 
         return len(self._tags)
 
     @contextlib.contextmanager
+    def xml_cleaning_method(self, method='escape_xml', **clean_kwargs):
+        """Context manager to control how XML data tags are cleaned (escaped) to
+        remove potentially unsafe characters or constructs.
+
+        The default (``method='escape_xml'``) applies brute-force escaping of
+        certain key XML characters like ``<``, ``>``, and ``&`` to ensure that
+        the output is not valid XML.
+
+        In order to explicitly allow certain XML tags (e.g. link reference or
+        emphasis tags), use ``method='bleach_clean'``.  This sanitizes the data
+        string using the ``clean`` function of the
+        `https://bleach.readthedocs.io/en/latest/clean.html <bleach>`_ package.
+        Any additional keyword arguments will be passed directly to the
+        ``clean`` function.
+
+        Finally, use ``method='none'`` to disable any sanitization. This should
+        be used sparingly.
+
+        Example::
+
+          w = writer.XMLWriter(ListWriter(lines))
+          with w.xml_cleaning_method('bleach_clean'):
+              w.start('td')
+              w.data('<a href="https://google.com">google.com</a>')
+              w.end()
+
+        Parameters
+        ----------
+        method : str
+            Cleaning method.  Allowed values are "escape_xml",
+            "bleach_clean", and "none".
+
+        **clean_kwargs : keyword args
+            Additional keyword args that are passed to the
+            bleach.clean() function.
+        """
+        current_xml_escape_cdata = self.xml_escape_cdata
+
+        if method == 'bleach_clean':
+            # NOTE: bleach is imported locally to avoid importing it when
+            # it is not nocessary
+            try:
+                import bleach
+            except ImportError:
+                raise ValueError('bleach package is required when HTML escaping is disabled.\n'
+                                 'Use "pip install bleach".')
+
+            if clean_kwargs is None:
+                clean_kwargs = {}
+            self.xml_escape_cdata = lambda x: bleach.clean(x, **clean_kwargs)
+        elif method == "none":
+            self.xml_escape_cdata = lambda x: x
+        elif method != 'escape_xml':
+            raise ValueError('allowed values of method are "escape_xml", "bleach_clean", and "none"')
+
+        yield
+
+        self.xml_escape_cdata = current_xml_escape_cdata
+
+    @contextlib.contextmanager
     def tag(self, tag, attrib={}, **extra):
         """
-        A convenience method for use with the `with` statement::
+        A convenience method for creating wrapper elements using the
+        ``with`` statement.
 
-            with writer.tag('foo'):
-                writer.element('bar')
-            # </foo> is implicitly closed here
+        Examples
+        --------
+
+        >>> with writer.tag('foo'):  # doctest: +SKIP
+        ...     writer.element('bar')
+        ... # </foo> is implicitly closed here
+        ...
 
         Parameters are the same as to `start`.
         """
@@ -169,7 +233,7 @@ class XMLWriter:
         """
         self._flush()
         self.write(self.get_indentation_spaces())
-        self.write(u"<!-- %s -->\n" % self.xml_escape_cdata(comment))
+        self.write("<!-- {} -->\n".format(self.xml_escape_cdata(comment)))
 
     def data(self, text):
         """
@@ -194,21 +258,24 @@ class XMLWriter:
             If omitted, the current element is closed.
         """
         if tag:
-            assert self._tags, "unbalanced end(%s)" % tag
-            assert tag == self._tags[-1],\
-                   "expected end(%s), got %s" % (self._tags[-1], tag)
+            if not self._tags:
+                raise ValueError(f"unbalanced end({tag})")
+            if tag != self._tags[-1]:
+                raise ValueError("expected end({}), got {}".format(
+                        self._tags[-1], tag))
         else:
-            assert self._tags, "unbalanced end()"
+            if not self._tags:
+                raise ValueError("unbalanced end()")
         tag = self._tags.pop()
         if self._data:
             self._flush(indent, wrap)
         elif self._open:
             self._open = 0
-            self.write(u"/>\n")
+            self.write("/>\n")
             return
         if indent:
             self.write(self.get_indentation_spaces())
-        self.write(u"</%s>\n" % tag)
+        self.write(f"</{tag}>\n")
 
     def close(self, id):
         """
@@ -226,7 +293,7 @@ class XMLWriter:
     def element(self, tag, text=None, wrap=False, attrib={}, **extra):
         """
         Adds an entire element.  This is the same as calling `start`,
-        `data`, and `end` in sequence. The `text` argument
+        `data`, and `end` in sequence. The ``text`` argument
         can be omitted.
         """
         self.start(tag, attrib, **extra)
@@ -269,11 +336,11 @@ class XMLWriter:
         -------
         attrs : dict
             Maps attribute names to the values retrieved from
-            `obj.attr`.  If any of the attributes is `None`, it will
+            ``obj.attr``.  If any of the attributes is `None`, it will
             not appear in the output dictionary.
         """
         d = {}
         for attr in attrs:
             if getattr(obj, attr) is not None:
-                d[attr.replace(u'_', u'-')] = unicode(getattr(obj, attr))
+                d[attr.replace('_', '-')] = str(getattr(obj, attr))
         return d

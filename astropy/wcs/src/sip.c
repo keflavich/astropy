@@ -3,11 +3,13 @@
          mdroe@stsci.edu
 */
 
-#include "sip.h"
+#include "astropy_wcs/sip.h"
 
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include <wcserr.h>
 
 #define SIP_ERRMSG(status) WCSERR_SET(status)
 
@@ -127,15 +129,13 @@ sip_init(
     }
   }
 
-  if (scratch_size > 0) {
-    scratch_size = (scratch_size + 1) * sizeof(double);
-    sip->scratch = malloc(scratch_size);
-    if (sip->scratch == NULL) {
-      sip_free(sip);
-      status = wcserr_set(
-        SIP_ERRMSG(WCSERR_MEMORY), "Memory allocation failed");
-      goto exit;
-    }
+  scratch_size = (scratch_size + 1) * sizeof(double);
+  sip->scratch = malloc(scratch_size);
+  if (sip->scratch == NULL) {
+    sip_free(sip);
+    status = wcserr_set(
+      SIP_ERRMSG(WCSERR_MEMORY), "Memory allocation failed");
+    goto exit;
   }
 
   sip->crpix[0] = crpix[0];
@@ -330,4 +330,3 @@ sip_foc2pix(
 
   return sip_foc2deltas(sip, naxes, nelem, foc, pix);
 }
-

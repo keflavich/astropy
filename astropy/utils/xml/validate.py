@@ -1,4 +1,5 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
+
 """
 Functions to do XML schema and DTD validation.  At the moment, this
 makes a subprocess call to xmllint.  This could use a Python-based
@@ -6,7 +7,9 @@ library at some point in the future, if something appropriate could be
 found.
 """
 
+
 import os
+import subprocess
 
 
 def validate_schema(filename, schema_file):
@@ -18,7 +21,7 @@ def validate_schema(filename, schema_file):
     filename : str
         The path to the XML file to validate
 
-    schema : str
+    schema_file : str
         The path to the XML schema or DTD
 
     Returns
@@ -27,7 +30,6 @@ def validate_schema(filename, schema_file):
         Returns the returncode from xmllint and the stdout and stderr
         as strings
     """
-    import subprocess
 
     base, ext = os.path.splitext(schema_file)
     if ext == '.xsd':
@@ -38,7 +40,7 @@ def validate_schema(filename, schema_file):
         raise TypeError("schema_file must be a path to an XML Schema or DTD")
 
     p = subprocess.Popen(
-        "xmllint --noout --nonet %s %s" % (schema_part, filename),
+        f"xmllint --noout --nonet {schema_part} {filename}",
         shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     stdout, stderr = p.communicate()
 
@@ -46,9 +48,9 @@ def validate_schema(filename, schema_file):
         raise OSError(
             "xmllint not found, so can not validate schema")
     elif p.returncode < 0:
-        from ..misc import signal_number_to_name
+        from astropy.utils.misc import signal_number_to_name
         raise OSError(
-            "xmllint was terminated by signal '{0}'".format(
+            "xmllint was terminated by signal '{}'".format(
                 signal_number_to_name(-p.returncode)))
 
     return p.returncode, stdout, stderr

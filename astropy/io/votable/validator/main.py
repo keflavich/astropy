@@ -3,19 +3,17 @@
 Validates a large collection of web-accessible VOTable files,
 and generates a report as a directory tree of HTML files.
 """
-from __future__ import print_function
 
 # STDLIB
 import os
 
 # LOCAL
-from ....utils.data import get_pkg_data_filename
+from astropy.utils.data import get_pkg_data_filename
 from . import html
 from . import result
 
 
 __all__ = ['make_validation_report']
-
 
 
 def get_srcdir():
@@ -31,10 +29,10 @@ def get_urls(destdir, s):
     urls = []
     for type in types:
         filename = get_pkg_data_filename(
-            'urls/cone.{0}.dat.gz'.format(type))
+            f'data/urls/cone.{type}.dat.gz')
         with gzip.open(filename, 'rb') as fd:
             for url in fd.readlines():
-                s.next()
+                next(s)
                 url = url.strip()
                 if url not in seen:
                     with result.Result(url, root=destdir) as r:
@@ -92,19 +90,18 @@ def make_validation_report(
 
     destdir : path, optional
         The directory to write the report to.  By default, this is a
-        directory called `astropy.io.votable.validator.results` in the
-        current directory.  If the directory does not exist, it will
-        be created.
+        directory called ``'results'`` in the current directory. If the
+        directory does not exist, it will be created.
 
     multiprocess : bool, optional
         If `True` (default), perform validations in parallel using all
         of the cores on this machine.
 
     stilts : path, optional
-        To perform validation with `votlint` from the the Java-based
+        To perform validation with ``votlint`` from the the Java-based
         `STILTS <http://www.star.bris.ac.uk/~mbt/stilts/>`_ VOTable
         parser, in addition to `astropy.io.votable`, set this to the
-        path of the `stilts.jar` file.  `java` on the system shell
+        path of the ``'stilts.jar'`` file.  ``java`` on the system shell
         path will be used to run it.
 
     Notes
@@ -113,12 +110,12 @@ def make_validation_report(
     locally in *destdir*.  To refresh the cache, remove *destdir*
     first.
     """
-    from ....utils.console import (color_print, ProgressBar, Spinner)
+    from astropy.utils.console import (color_print, ProgressBar, Spinner)
 
     if stilts is not None:
         if not os.path.exists(stilts):
             raise ValueError(
-                '{0} does not exist.'.format(stilts))
+                f'{stilts} does not exist.')
 
     destdir = os.path.abspath(destdir)
 
@@ -146,7 +143,6 @@ def make_validation_report(
         votlint_args = [(stilts, x, destdir) for x in urls]
         ProgressBar.map(
             votlint_validate, votlint_args, multiprocess=multiprocess)
-
 
     color_print('Generating HTML files', 'green')
     ProgressBar.map(

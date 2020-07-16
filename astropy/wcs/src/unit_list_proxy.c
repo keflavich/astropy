@@ -5,14 +5,15 @@
 
 #define NO_IMPORT_ARRAY
 
-#include "pyutil.h"
-#include "str_list_proxy.h"
+#include "astropy_wcs/pyutil.h"
+#include "astropy_wcs/str_list_proxy.h"
 
 /***************************************************************************
  * List-of-units proxy object
  ***************************************************************************/
 
 #define MAXSIZE 68
+#define ARRAYSIZE 72
 
 static PyTypeObject PyUnitListProxyType;
 
@@ -20,7 +21,7 @@ typedef struct {
   PyObject_HEAD
   /*@null@*/ /*@shared@*/ PyObject* pyobject;
   Py_ssize_t size;
-  char (*array)[72];
+  char (*array)[ARRAYSIZE];
   PyObject* unit_class;
 } PyUnitListProxy;
 
@@ -28,6 +29,7 @@ static void
 PyUnitListProxy_dealloc(
     PyUnitListProxy* self) {
 
+  PyObject_GC_UnTrack(self);
   Py_XDECREF(self->pyobject);
   Py_TYPE(self)->tp_free((PyObject*)self);
 }
@@ -54,22 +56,8 @@ PyUnitListProxy_traverse(
     visitproc visit,
     void *arg) {
 
-  int vret;
-
-  if (self->pyobject) {
-    vret = visit(self->pyobject, arg);
-    if (vret != 0) {
-      return vret;
-    }
-  }
-
-  if (self->unit_class) {
-    vret = visit(self->unit_class, arg);
-    if (vret != 0) {
-      return vret;
-    }
-  }
-
+  Py_VISIT(self->pyobject);
+  Py_VISIT(self->unit_class);
   return 0;
 }
 
@@ -77,15 +65,8 @@ static int
 PyUnitListProxy_clear(
     PyUnitListProxy *self) {
 
-  PyObject *tmp;
-
-  tmp = self->pyobject;
-  self->pyobject = NULL;
-  Py_XDECREF(tmp);
-
-  tmp = self->unit_class;
-  self->unit_class = NULL;
-  Py_XDECREF(tmp);
+  Py_CLEAR(self->pyobject);
+  Py_CLEAR(self->unit_class);
 
   return 0;
 }
@@ -94,7 +75,7 @@ PyUnitListProxy_clear(
 PyUnitListProxy_New(
     /*@shared@*/ PyObject* owner,
     Py_ssize_t size,
-    char (*array)[72]) {
+    char (*array)[ARRAYSIZE]) {
 
   PyUnitListProxy* self = NULL;
   PyObject *units_module;
@@ -147,20 +128,24 @@ _get_unit(
 
   PyObject *args;
   PyObject *kw;
-  PyObject *fits;
   PyObject *result;
 
+  kw = Py_BuildValue("{s:s,s:s}", "format", "fits", "parse_strict", "warn");
+  if (kw == NULL) {
+      return NULL;
+  }
+
   args = PyTuple_New(1);
+  if (args == NULL) {
+      Py_DECREF(kw);
+      return NULL;
+  }
   PyTuple_SetItem(args, 0, unit);
   Py_INCREF(unit);
-  fits = PyUnicode_FromStringAndSize("fits", 4);
-  kw = PyDict_New();
-  PyDict_SetItemString(kw, "format", fits);
 
   result = PyObject_Call(unit_class, args, kw);
 
   Py_DECREF(args);
-  Py_DECREF(fits);
   Py_DECREF(kw);
   return result;
 }
@@ -173,7 +158,7 @@ PyUnitListProxy_getitem(
   PyObject *value;
   PyObject *result;
 
-  if (index >= self->size) {
+  if (index >= self->size || index < 0) {
     PyErr_SetString(PyExc_IndexError, "index out of range");
     return NULL;
   }
@@ -186,6 +171,44 @@ PyUnitListProxy_getitem(
   return result;
 }
 
+static PyObject*
+PyUnitListProxy_richcmp(
+	PyObject *a,
+	PyObject *b,
+	int op){
+  PyUnitListProxy *lhs, *rhs;
+  Py_ssize_t idx;
+  int equal = 1;
+  assert(a != NULL && b != NULL);
+  if (!PyObject_TypeCheck(a, &PyUnitListProxyType) ||
+      !PyObject_TypeCheck(b, &PyUnitListProxyType)) {
+    Py_RETURN_NOTIMPLEMENTED;
+  }
+  if (op != Py_EQ && op != Py_NE) {
+    Py_RETURN_NOTIMPLEMENTED;
+  }
+
+  /* The actual comparison of the two objects. unit_class is ignored because
+   * it's not an essential property of the instances.
+   */
+  lhs = (PyUnitListProxy *)a;
+  rhs = (PyUnitListProxy *)b;
+  if (lhs->size != rhs->size) {
+    equal = 0;
+  }
+  for (idx = 0; idx < lhs->size && equal == 1; idx++) {
+    if (strncmp(lhs->array[idx], rhs->array[idx], ARRAYSIZE) != 0) {
+      equal = 0;
+    }
+  }
+  if ((op == Py_EQ && equal == 1) ||
+      (op == Py_NE && equal == 0)) {
+    Py_RETURN_TRUE;
+  } else {
+    Py_RETURN_FALSE;
+  }
+}
+
 static int
 PyUnitListProxy_setitem(
     PyUnitListProxy* self,
@@ -196,7 +219,7 @@ PyUnitListProxy_setitem(
   PyObject* unicode_value;
   PyObject* bytes_value;
 
-  if (index > self->size) {
+  if (index >= self->size || index < 0) {
     PyErr_SetString(PyExc_IndexError, "index out of range");
     return -1;
   }
@@ -251,12 +274,7 @@ static PySequenceMethods PyUnitListProxy_sequence_methods = {
 };
 
 static PyTypeObject PyUnitListProxyType = {
-  #if PY3K
   PyVarObject_HEAD_INIT(NULL, 0)
-  #else
-  PyObject_HEAD_INIT(NULL)
-  0,                          /*ob_size*/
-  #endif
   "astropy.wcs.UnitListProxy", /*tp_name*/
   sizeof(PyUnitListProxy),  /*tp_basicsize*/
   0,                          /*tp_itemsize*/
@@ -279,7 +297,7 @@ static PyTypeObject PyUnitListProxyType = {
   0,                          /* tp_doc */
   (traverseproc)PyUnitListProxy_traverse, /* tp_traverse */
   (inquiry)PyUnitListProxy_clear, /* tp_clear */
-  0,                          /* tp_richcompare */
+  (richcmpfunc)PyUnitListProxy_richcmp, /* tp_richcompare */
   0,                          /* tp_weaklistoffset */
   0,                          /* tp_iter */
   0,                          /* tp_iternext */
@@ -303,7 +321,7 @@ set_unit_list(
     const char* propname,
     PyObject* value,
     Py_ssize_t len,
-    char (*dest)[72]) {
+    char (*dest)[ARRAYSIZE]) {
 
   PyObject*  unit  = NULL;
   PyObject*  proxy = NULL;
@@ -331,6 +349,9 @@ set_unit_list(
   }
 
   proxy = PyUnitListProxy_New(owner, len, dest);
+  if (proxy == NULL) {
+      return -1;
+  }
 
   for (i = 0; i < len; ++i) {
     unit = PySequence_GetItem(value, i);
@@ -364,3 +385,4 @@ _setup_unit_list_proxy_type(
 
   return 0;
 }
+

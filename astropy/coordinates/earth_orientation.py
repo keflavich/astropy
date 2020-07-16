@@ -7,30 +7,33 @@ precession and nutation.
 This module is (currently) not intended to be part of the public API, but
 is instead primarily for internal use in `coordinates`
 """
+
+
 import numpy as np
 
-from ..time import Time
-from .. import units as u
+from astropy.time import Time
+from astropy import units as u
+from .matrix_utilities import rotation_matrix, matrix_product, matrix_transpose
 
-jd1950 = Time('B1950', scale='tai').jd
-jd2000 = Time('J2000', scale='utc').jd
+
+jd1950 = Time('B1950').jd
+jd2000 = Time('J2000').jd
 _asecperrad = u.radian.to(u.arcsec)
 
 
 def eccentricity(jd):
     """
-    Computes the eccentricity of the Earth's orbit at the requested Julian
-    Date.
+    Eccentricity of the Earth's orbit at the requested Julian Date.
 
     Parameters
     ----------
-    jd : scalar or array-like
-        julian date at which to compute the eccentricity
+    jd : scalar or array_like
+        Julian date at which to compute the eccentricity
 
     returns
     -------
     eccentricity : scalar or array
-        The eccentricity in degrees (or array of eccentricities)
+        The eccentricity (or array of eccentricities)
 
     References
     ----------
@@ -51,8 +54,8 @@ def mean_lon_of_perigee(jd):
 
     Parameters
     ----------
-    jd : scalar or array-like
-        julian date at which to compute the mean longitude of perigee
+    jd : scalar or array_like
+        Julian date at which to compute the mean longitude of perigee
 
     returns
     -------
@@ -77,8 +80,8 @@ def obliquity(jd, algorithm=2006):
 
     Parameters
     ----------
-    jd : scalar or array-like
-        julian date at which to compute the obliquity
+    jd : scalar or array_like
+        Julian date at which to compute the obliquity
     algorithm : int
         Year of algorithm based on IAU adoption. Can be 2006, 2000 or 1980. The
         2006 algorithm is mentioned in Circular 179, but the canonical reference
@@ -119,7 +122,7 @@ def obliquity(jd, algorithm=2006):
 # TODO: replace this with SOFA equivalent
 def precession_matrix_Capitaine(fromepoch, toepoch):
     """
-    Computes the precession matrix from one julian epoch to another.
+    Computes the precession matrix from one Julian epoch to another.
     The exact method is based on Capitaine et al. 2003, which should
     match the IAU 2006 standard.
 
@@ -133,13 +136,14 @@ def precession_matrix_Capitaine(fromepoch, toepoch):
     Returns
     -------
     pmatrix : 3x3 array
-        Precession matrix to get from `fromepoch` to `toepoch`
+        Precession matrix to get from ``fromepoch`` to ``toepoch``
 
     References
     ----------
     USNO Circular 179
     """
-    mat_fromto2000 = _precess_from_J2000_Capitaine(fromepoch.jyear).T
+    mat_fromto2000 = matrix_transpose(
+        _precess_from_J2000_Capitaine(fromepoch.jyear))
     mat_2000toto = _precess_from_J2000_Capitaine(toepoch.jyear)
 
     return np.dot(mat_2000toto, mat_fromto2000)
@@ -154,11 +158,9 @@ def _precess_from_J2000_Capitaine(epoch):
     Parameters
     ----------
     epoch : scalar
-        The epoch as a julian year number (e.g. J2000 is 2000.0)
+        The epoch as a Julian year number (e.g. J2000 is 2000.0)
 
     """
-    from .angles import rotation_matrix
-
     T = (epoch - 2000.0) / 100.0
     # from USNO circular
     pzeta = (-0.0000003173, -0.000005971, 0.01801828, 0.2988499, 2306.083227, 2.650545)
@@ -168,20 +170,18 @@ def _precess_from_J2000_Capitaine(epoch):
     z = np.polyval(pz, T) / 3600.0
     theta = np.polyval(ptheta, T) / 3600.0
 
-    return rotation_matrix(-z, 'z') *\
-           rotation_matrix(theta, 'y') *\
-           rotation_matrix(-zeta, 'z')
+    return matrix_product(rotation_matrix(-z, 'z'),
+                          rotation_matrix(theta, 'y'),
+                          rotation_matrix(-zeta, 'z'))
 
 
 def _precession_matrix_besselian(epoch1, epoch2):
     """
-    computes the precession matrix from one Besselian epoch to another using
+    Computes the precession matrix from one Besselian epoch to another using
     Newcomb's method.
 
-    `epoch1` and `epoch2` are in besselian year numbers
+    ``epoch1`` and ``epoch2`` are in Besselian year numbers.
     """
-    from .angles import rotation_matrix
-
     # tropical years
     t1 = (epoch1 - 1850.0) / 1000.0
     t2 = (epoch2 - 1850.0) / 1000.0
@@ -205,9 +205,9 @@ def _precession_matrix_besselian(epoch1, epoch2):
     ptheta = (theta3, theta2, theta1, 0)
     theta = np.polyval(ptheta, dt) / 3600
 
-    return rotation_matrix(-z, 'z') *\
-           rotation_matrix(theta, 'y') *\
-           rotation_matrix(-zeta, 'z')
+    return matrix_product(rotation_matrix(-z, 'z'),
+                          rotation_matrix(theta, 'y'),
+                          rotation_matrix(-zeta, 'z'))
 
 
 def _load_nutation_data(datastr, seriestype):
@@ -216,7 +216,6 @@ def _load_nutation_data(datastr, seriestype):
 
     Seriestype can be 'lunisolar' or 'planetary'
     """
-    from os.path import join
 
     if seriestype == 'lunisolar':
         dtypes = [('nl', int),
@@ -251,13 +250,15 @@ def _load_nutation_data(datastr, seriestype):
     else:
         raise ValueError('requested invalid nutation series type')
 
-    lines = [l for l in datastr.split('\n') if not l.startswith('#') if not l.strip() == '']
+    lines = [l for l in datastr.split('\n')
+             if not l.startswith('#') if not l.strip() == '']
 
-    lists = [[] for n in dtypes]
+    lists = [[] for _ in dtypes]
     for l in lines:
         for i, e in enumerate(l.split(' ')):
             lists[i].append(dtypes[i][1](e))
     return np.rec.fromarrays(lists, names=[e[0] for e in dtypes])
+
 
 _nut_data_00b = """
 #l lprime F D Omega longitude_sin longitude_sin*t longitude_cos obliquity_cos obliquity_cos*t,obliquity_sin
@@ -402,13 +403,9 @@ def nutation_matrix(epoch):
     Matrix converts from mean coordinate to true coordinate as
     r_true = M * r_mean
     """
-    from .angles import rotation_matrix
-
     # TODO: implement higher precision 2006/2000A model if requested/needed
     epsa, dpsi, deps = nutation_components2000B(epoch.jd)  # all in radians
 
-    rot1 = rotation_matrix(-(epsa + deps), 'x', False)
-    rot2 = rotation_matrix(-dpsi, 'z', False)
-    rot3 = rotation_matrix(epsa, 'x', False)
-
-    return rot1 * rot2 * rot3
+    return matrix_product(rotation_matrix(-(epsa + deps), 'x', False),
+                          rotation_matrix(-dpsi, 'z', False),
+                          rotation_matrix(epsa, 'x', False))

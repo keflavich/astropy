@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,33 +22,42 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: prj.h,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: prj.h,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *=============================================================================
 *
-* WCSLIB 4.17 - C routines that implement the spherical map projections
-* recognized by the FITS World Coordinate System (WCS) standard.  Refer to
-*
-*   "Representations of world coordinates in FITS",
-*   Greisen, E.W., & Calabretta, M.R. 2002, A&A, 395, 1061 (Paper I)
-*
-*   "Representations of celestial coordinates in FITS",
-*   Calabretta, M.R., & Greisen, E.W. 2002, A&A, 395, 1077 (Paper II)
-*
-* Refer to the README file provided with WCSLIB for an overview of the
-* library.
+* WCSLIB 7.3 - C routines that implement the FITS World Coordinate System
+* (WCS) standard.  Refer to the README file provided with WCSLIB for an
+* overview of the library.
 *
 *
 * Summary of the prj routines
 * ---------------------------
-* These routines implement the spherical map projections defined by the FITS
-* WCS standard.  They are based on the prjprm struct which contains all
-* information needed for the computations.  The struct contains some members
-* that must be set by the user, and others that are maintained by these
-* routines, somewhat like a C++ class but with no encapsulation.
+* Routines in this suite  implement the spherical map projections defined by
+* the FITS World Coordinate System (WCS) standard, as described in
+*
+=   "Representations of world coordinates in FITS",
+=   Greisen, E.W., & Calabretta, M.R. 2002, A&A, 395, 1061 (WCS Paper I)
+=
+=   "Representations of celestial coordinates in FITS",
+=   Calabretta, M.R., & Greisen, E.W. 2002, A&A, 395, 1077 (WCS Paper II)
+=
+=   "Mapping on the HEALPix grid",
+=   Calabretta, M.R., & Roukema, B.F. 2007, MNRAS, 381, 865 (WCS Paper V)
+=
+=   "Representing the 'Butterfly' Projection in FITS -- Projection Code XPH",
+=   Calabretta, M.R., & Lowe, S.R. 2013, PASA, 30, e050 (WCS Paper VI)
+*
+* These routines are based on the prjprm struct which contains all information
+* needed for the computations.  The struct contains some members that must be
+* set by the user, and others that are maintained by these routines, somewhat
+* like a C++ class but with no encapsulation.
 *
 * Routine prjini() is provided to initialize the prjprm struct with default
 * values, prjfree() reclaims any memory that may have been allocated to store
 * an error message, and prjprt() prints its contents.
+*
+* prjperr() prints the error message(s) (if any) stored in a prjprm struct.
+* prjbchk() performs bounds checking on native spherical coordinates.
 *
 * Setup routines for each projection with names of the form ???set(), where
 * "???" is the down-cased three-letter projection code, compute intermediate
@@ -66,7 +75,10 @@
 *
 * In summary, the routines are:
 *   - prjini()                Initialization routine for the prjprm struct.
-*   - prjprt()                Routine to print the prjprm struct.
+*   - prjfree()               Reclaim memory allocated for error messages.
+*   - prjprt()                Print the prjprm struct.
+*   - prjperr()               Print error message (if any).
+*   - prjbchk()               Bounds checking on native coordinates.
 *
 *   - prjset(), prjx2s(), prjs2x():   Generic driver routines
 *
@@ -97,6 +109,7 @@
 *   - cscset(), cscx2s(), cscs2x():   CSC (COBE spherical cube)
 *   - qscset(), qscx2s(), qscs2x():   QSC (quadrilateralized spherical cube)
 *   - hpxset(), hpxx2s(), hpxs2x():   HPX (HEALPix)
+*   - xphset(), xphx2s(), xphs2x():   XPH (HEALPix polar, aka "butterfly")
 *
 * Argument checking (projection routines):
 * ----------------------------------------
@@ -110,15 +123,19 @@
 * zero).  The projection routines for AZP, SZP, TAN, SIN, ZPN, and COP also
 * return error 2 if (phi,theta) corresponds to the overlapped (far) side of
 * the projection but also return the corresponding value of (x,y).  This
-* strict bounds checking may be relaxed at any time by setting prjprm::bounds
-* to 0 (rather than 1); the projections need not be reinitialized.
+* strict bounds checking may be relaxed at any time by setting
+* prjprm::bounds%2 to 0 (rather than 1); the projections need not be
+* reinitialized.
 *
 * Argument checking (deprojection routines):
 * ------------------------------------------
 * Error checking on the projected coordinates (x,y) is limited to that
 * required to ascertain whether a solution exists.  Where a solution does
-* exist no check is made that the value of phi and theta obtained lie within
-* the ranges [-180,180] for phi, and [-90,90] for theta.
+* exist, an optional check is made that the value of phi and theta obtained
+* lie within the ranges [-180,180] for phi, and [-90,90] for theta.  This
+* check, performed by prjbchk(), is enabled by default.  It may be disabled by
+* setting prjprm::bounds%4 to 0 (rather than 1); the projections need not be
+* reinitialized.
 *
 * Accuracy:
 * ---------
@@ -136,6 +153,11 @@
 * ----------------------------------------------------
 * prjini() sets all members of a prjprm struct to default values.  It should
 * be used to initialize every prjprm struct.
+*
+* PLEASE NOTE: If the prjprm struct has already been initialized, then before
+* reinitializing, it prjfree() should be used to free any memory that may have
+* been allocated to store an error message.  A memory leak may otherwise
+* result.
 *
 * Returned:
 *   prj       struct prjprm*
@@ -175,6 +197,62 @@
 *             int       Status return value:
 *                         0: Success.
 *                         1: Null prjprm pointer passed.
+*
+*
+* prjperr() - Print error messages from a prjprm struct
+* -----------------------------------------------------
+* prjperr() prints the error message(s) (if any) stored in a prjprm struct.
+* If there are no errors then nothing is printed.  It uses wcserr_prt(), q.v.
+*
+* Given:
+*   prj       const struct prjprm*
+*                       Projection parameters.
+*
+*   prefix    const char *
+*                       If non-NULL, each output line will be prefixed with
+*                       this string.
+*
+* Function return value:
+*             int       Status return value:
+*                         0: Success.
+*                         1: Null prjprm pointer passed.
+*
+*
+* prjbchk() - Bounds checking on native coordinates
+* -------------------------------------------------
+* prjbchk() performs bounds checking on native spherical coordinates.  As
+* returned by the deprojection (x2s) routines, native longitude is expected
+* to lie in the closed interval [-180,180], with latitude in [-90,90].
+*
+* A tolerance may be specified to provide a small allowance for numerical
+* imprecision.  Values that lie outside the allowed range by not more than
+* the specified tolerance will be adjusted back into range.
+*
+* If prjprm::bounds&4 is set, as it is by prjini(), then prjbchk() will be
+* invoked automatically by the Cartesian-to-spherical deprojection (x2s)
+* routines with an appropriate tolerance set for each projection.
+*
+* Given:
+*   tol       double    Tolerance for the bounds check [deg].
+*
+*   nphi,
+*   ntheta    int       Vector lengths.
+*
+*   spt       int       Vector stride.
+*
+* Given and returned:
+*   phi,theta double[]  Native longitude and latitude (phi,theta) [deg].
+*
+* Returned:
+*   stat      int[]     Status value for each vector element:
+*                         0: Valid value of (phi,theta).
+*                         1: Invalid value.
+*
+* Function return value:
+*             int       Status return value:
+*                         0: Success.
+*                         1: One or more of the (phi,theta) coordinates
+*                            were, invalid, as indicated by the stat vector.
 *
 *
 * prjset() - Generic setup routine for the prjprm struct
@@ -230,7 +308,7 @@
 *   phi,theta double[]  Longitude and latitude (phi,theta) of the projected
 *                       point in native spherical coordinates [deg].
 *
-*   stat      int[]     Status return value for each vector element:
+*   stat      int[]     Status value for each vector element:
 *                         0: Success.
 *                         1: Invalid value of (x,y).
 *
@@ -270,7 +348,7 @@
 * Returned:
 *   x,y       double[]  Projected coordinates.
 *
-*   stat      int[]     Status return value for each vector element:
+*   stat      int[]     Status value for each vector element:
 *                         0: Success.
 *                         1: Invalid value of (phi,theta).
 *
@@ -326,7 +404,7 @@
 *   phi,theta double[]  Longitude and latitude of the projected point in
 *                       native spherical coordinates [deg].
 *
-*   stat      int[]     Status return value for each vector element:
+*   stat      int[]     Status value for each vector element:
 *                         0: Success.
 *                         1: Invalid value of (x,y).
 *
@@ -364,7 +442,7 @@
 * Returned:
 *   x,y       double[]  Projected coordinates.
 *
-*   stat      int[]     Status return value for each vector element:
+*   stat      int[]     Status value for each vector element:
 *                         0: Success.
 *                         1: Invalid value of (phi,theta).
 *
@@ -431,8 +509,18 @@
 *     projection-specific default.
 *
 *   int bounds
-*     (Given) Controls strict bounds checking for the AZP, SZP, TAN, SIN, ZPN,
-*     and COP projections; set to zero to disable checking.
+*     (Given) Controls bounds checking.  If bounds&1 then enable strict bounds
+*     checking for the spherical-to-Cartesian (s2x) transformation for the
+*     AZP, SZP, TAN, SIN, ZPN, and COP projections.  If bounds&2 then enable
+*     strict bounds checking for the Cartesian-to-spherical transformation
+*     (x2s) for the HPX and XPH projections.  If bounds&4 then the Cartesian-
+*     to-spherical transformations (x2s) will invoke prjbchk() to perform
+*     bounds checking on the computed native coordinates, with a tolerance set
+*     to suit each projection.  bounds is set to 7 by prjini() by default
+*     which enables all checks.  Zero it to disable all checking.
+*
+*     It is not necessary to reset the prjprm struct (via prjset() or
+*     ???set()) when prjprm::bounds is changed.
 *
 * The remaining members of the prjprm struct are maintained by the setup
 * routines and must not be modified elsewhere:
@@ -505,7 +593,7 @@
 *     (phi_0,theta_0).
 *
 *   struct wcserr *err
-*     (Returned) If enabled, when an error status is returned this struct
+*     (Returned) If enabled, when an error status is returned, this struct
 *     contains detailed information about the error, see wcserr_enable().
 *
 *   void *padding
@@ -523,7 +611,7 @@
 *     projections).
 *
 *   int (*prjx2s)(PRJX2S_ARGS)
-*     (Returned) Pointer to the projection ...
+*     (Returned) Pointer to the spherical projection ...
 *   int (*prjs2x)(PRJ_ARGS)
 *     (Returned) ... and deprojection routines.
 *
@@ -536,8 +624,6 @@
 
 #ifndef WCSLIB_PROJ
 #define WCSLIB_PROJ
-
-#include "wcserr.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -564,7 +650,7 @@ extern const int CONIC, CONVENTIONAL, CYLINDRICAL, POLYCONIC,
 extern const char prj_categories[9][32];
 
 extern const int  prj_ncode;
-extern const char prj_codes[27][4];
+extern const char prj_codes[28][4];
 
 #ifdef PRJX2S_ARGS
 #undef PRJX2S_ARGS
@@ -594,7 +680,7 @@ struct prjprm {
   double r0;			/* Radius of the generating sphere.         */
   double pv[PVN];		/* Projection parameters.                   */
   double phi0, theta0;		/* Fiducial native coordinates.             */
-  int    bounds;		/* Enable strict bounds checking.           */
+  int    bounds;		/* Controls bounds checking.                */
 
   /* Information derived from the parameters supplied.                      */
   /*------------------------------------------------------------------------*/
@@ -630,6 +716,9 @@ struct prjprm {
 int prjini(struct prjprm *prj);
 int prjfree(struct prjprm *prj);
 int prjprt(const struct prjprm *prj);
+int prjperr(const struct prjprm *prj, const char *prefix);
+int prjbchk(double tol, int nphi, int ntheta, int spt, double phi[],
+            double theta[], int stat[]);
 
 int prjset(struct prjprm *prj);
 int prjx2s(PRJX2S_ARGS);
@@ -742,6 +831,10 @@ int qscs2x(PRJS2X_ARGS);
 int hpxset(struct prjprm *prj);
 int hpxx2s(PRJX2S_ARGS);
 int hpxs2x(PRJS2X_ARGS);
+
+int xphset(struct prjprm *prj);
+int xphx2s(PRJX2S_ARGS);
+int xphs2x(PRJS2X_ARGS);
 
 
 /* Deprecated. */

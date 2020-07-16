@@ -8,35 +8,21 @@ cds.py:
 :Author: Tom Aldcroft (aldcroft@head.cfa.harvard.edu)
 """
 
-##
-## Redistribution and use in source and binary forms, with or without
-## modification, are permitted provided that the following conditions are met:
-##     * Redistributions of source code must retain the above copyright
-##       notice, this list of conditions and the following disclaimer.
-##     * Redistributions in binary form must reproduce the above copyright
-##       notice, this list of conditions and the following disclaimer in the
-##       documentation and/or other materials provided with the distribution.
-##     * Neither the name of the Smithsonian Astrophysical Observatory nor the
-##       names of its contributors may be used to endorse or promote products
-##       derived from this software without specific prior written permission.
-##
-## THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-## ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-## WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-## DISCLAIMED. IN NO EVENT SHALL <COPYRIGHT HOLDER> BE LIABLE FOR ANY
-## DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-## (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-## LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-## ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-## (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-## SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 import fnmatch
 import itertools
 import re
+import os
+from contextlib import suppress
 
 from . import core
 from . import fixedwidth
+
+from astropy.units import Unit
+
+
+__doctest_skip__ = ['*']
+
 
 class CdsHeader(core.BaseHeader):
     col_type_map = {'e': core.FloatType,
@@ -44,40 +30,34 @@ class CdsHeader(core.BaseHeader):
                     'i': core.IntType,
                     'a': core.StrType}
 
+    'The ReadMe file to construct header from.'
+    readme = None
+
     def get_type_map_key(self, col):
         match = re.match(r'\d*(\S)', col.raw_type.lower())
         if not match:
-            raise ValueError('Unrecognized CDS format "%s" for column "%s"' % (
-                    col.raw_type, col.name))
+            raise ValueError('Unrecognized CDS format "{}" for column "{}"'.format(
+                col.raw_type, col.name))
         return match.group(1)
 
-    def __init__(self, readme=None):
-        """Initialize ReadMe filename.
-
-        :param readme: The ReadMe file to construct header from.
-        :type readme: String
-
-        CDS tables have their header information in a separate file
-        named "ReadMe". The ``get_cols`` method will read the contents
-        of the ReadMe file given by ``self.readme`` and set the various
-        properties needed to read the data file. The data file name
-        will be the ``table`` passed to the ``read`` method.
-        """
-        core.BaseHeader.__init__(self)
-        self.readme = readme
-
     def get_cols(self, lines):
-        """Initialize the header Column objects from the table ``lines`` for a CDS
+        """
+        Initialize the header Column objects from the table ``lines`` for a CDS
         header.
 
-        :param lines: list of table lines
-        :returns: list of table Columns
+        Parameters
+        ----------
+        lines : list
+            List of table lines
+
         """
+
         # Read header block for the table ``self.data.table_name`` from the read
         # me file ``self.readme``.
         if self.readme and self.data.table_name:
             in_header = False
-            f = open(self.readme,"r")
+            readme_inputter = core.BaseInputter()
+            f = readme_inputter.get_lines(self.readme)
             # Header info is not in data lines but in a separate file.
             lines = []
             comment_lines = 0
@@ -85,17 +65,17 @@ class CdsHeader(core.BaseHeader):
                 line = line.strip()
                 if in_header:
                     lines.append(line)
-                    if line.startswith('------') or line.startswith('======='):
+                    if line.startswith(('------', '=======')):
                         comment_lines += 1
                         if comment_lines == 3:
                             break
                 else:
                     match = re.match(r'Byte-by-byte Description of file: (?P<name>.+)$',
-                            line, re.IGNORECASE)
+                                     line, re.IGNORECASE)
                     if match:
                         # Split 'name' in case in contains multiple files
                         names = [s for s in re.split('[, ]+', match.group('name'))
-                                                                        if s]
+                                 if s]
                         # Iterate on names to find if one matches the tablename
                         # including wildcards.
                         for pattern in names:
@@ -105,12 +85,16 @@ class CdsHeader(core.BaseHeader):
                                 break
 
             else:
-                raise core.InconsistentTableError("Cant' find table {0} in {1}".format(
-                        self.data.table_name, self.readme))
-            f.close()
+                raise core.InconsistentTableError("Can't find table {} in {}".format(
+                    self.data.table_name, self.readme))
+
+        found_line = False
 
         for i_col_def, line in enumerate(lines):
             if re.match(r'Byte-by-byte Description', line, re.IGNORECASE):
+                found_line = True
+            elif found_line:  # First line after list of file descriptions
+                i_col_def -= 1  # Set i_col_def to last description line
                 break
 
         re_col_def = re.compile(r"""\s*
@@ -118,61 +102,59 @@ class CdsHeader(core.BaseHeader):
                                     (?P<end>   \d+)        \s+
                                     (?P<format> [\w.]+)     \s+
                                     (?P<units> \S+)        \s+
-                                    (?P<name>  \S+)        \s+
-                                    (?P<descr> \S.+)""",
+                                    (?P<name>  \S+)
+                                    (\s+ (?P<descr> \S.*))?""",
                                 re.VERBOSE)
 
         cols = []
-        for i, line in enumerate(itertools.islice(lines, i_col_def+4, None)):
-            if line.startswith('------') or line.startswith('======='):
+        for line in itertools.islice(lines, i_col_def + 4, None):
+            if line.startswith(('------', '=======')):
                 break
             match = re_col_def.match(line)
             if match:
-                col = core.Column(name=match.group('name'), index=i)
-                col.start = int(re.sub(r'[-\s]', '', match.group('start') or match.group('end'))) - 1
+                col = core.Column(name=match.group('name'))
+                col.start = int(re.sub(r'[-\s]', '',
+                                       match.group('start') or match.group('end'))) - 1
                 col.end = int(match.group('end'))
-                col.units = match.group('units')
-                if col.units == '---':
-                    col.units = None  # "---" is the marker for no units in CDS table
-                col.description = match.group('descr').strip()
+                unit = match.group('units')
+                if unit == '---':
+                    col.unit = None  # "---" is the marker for no unit in CDS table
+                else:
+                    col.unit = Unit(unit, format='cds', parse_strict='warn')
+                col.description = (match.group('descr') or '').strip()
                 col.raw_type = match.group('format')
                 col.type = self.get_col_type(col)
 
-                match = re.match(r'\? (?P<equal> =)? (?P<nullval> \S*)', col.description, re.VERBOSE)
+                match = re.match(
+                    r'\? (?P<equal> =)? (?P<nullval> \S*) (\s+ (?P<descriptiontext> \S.*))?',
+                    col.description, re.VERBOSE)
                 if match:
+                    col.description = (match.group('descriptiontext') or '').strip()
                     if issubclass(col.type, core.FloatType):
                         fillval = 'nan'
                     else:
-                        fillval = '-999'
-                    if match.group('nullval') == '':
-                        col.null = ''
-                    elif match.group('nullval') == '-':
+                        fillval = '0'
+
+                    if match.group('nullval') == '-':
                         col.null = '---'
+                        # CDS tables can use -, --, ---, or ---- to mark missing values
+                        # see https://github.com/astropy/astropy/issues/1335
+                        for i in [1, 2, 3, 4]:
+                            self.data.fill_values.append(('-' * i, fillval, col.name))
                     else:
                         col.null = match.group('nullval')
-                    self.data.fill_values.append((col.null, fillval, col.name))
+                        self.data.fill_values.append((col.null, fillval, col.name))
 
                 cols.append(col)
             else:  # could be a continuation of the previous col's description
                 if cols:
                     cols[-1].description += line.strip()
                 else:
-                    raise ValueError('Line "%s" not parsable as CDS header' % line)
+                    raise ValueError(f'Line "{line}" not parsable as CDS header')
 
         self.names = [x.name for x in cols]
-        names = set(self.names)
-        if self.include_names is not None:
-            names.intersection_update(self.include_names)
-        if self.exclude_names is not None:
-            names.difference_update(self.exclude_names)
 
-        self.cols = [x for x in cols if x.name in names]
-        self.n_data_cols = len(self.cols)
-
-        # Re-index the cols because the FixedWidthSplitter does NOT return the ignored
-        # cols (as is the case for typical delimiter-based splitters)
-        for i, col in enumerate(self.cols):
-            col.index = i
+        self.cols = cols
 
 
 class CdsData(core.BaseData):
@@ -188,15 +170,18 @@ class CdsData(core.BaseData):
         # attribute.
         if self.header.readme and self.table_name:
             return lines
-        i_sections = [i for (i, x) in enumerate(lines)
-                      if x.startswith('------') or x.startswith('=======')]
+        i_sections = [i for i, x in enumerate(lines)
+                      if x.startswith(('------', '======='))]
         if not i_sections:
             raise core.InconsistentTableError('No CDS section delimiter found')
-        return lines[i_sections[-1]+1 : ]
+        return lines[i_sections[-1]+1:]  # noqa
 
 
 class Cds(core.BaseReader):
-    """Read a CDS format table.  See http://vizier.u-strasbg.fr/doc/catstd.htx.
+    """CDS format table.
+
+    See: http://vizier.u-strasbg.fr/doc/catstd.htx
+
     Example::
 
       Table: Table name here
@@ -245,10 +230,24 @@ class Cds(core.BaseReader):
     the header information is at the top of the given table.  Examples::
 
       >>> from astropy.io import ascii
-      >>> table = ascii.read("t/cds.dat")
-      >>> table = ascii.read("t/vizier/table1.dat", readme="t/vizier/ReadMe")
-      >>> table = ascii.read("t/cds/multi/lhs2065.dat", readme="t/cds/multi/ReadMe")
-      >>> table = ascii.read("t/cds/glob/lmxbrefs.dat", readme="t/cds/glob/ReadMe")
+      >>> table = ascii.read("data/cds.dat")
+      >>> table = ascii.read("data/vizier/table1.dat", readme="data/vizier/ReadMe")
+      >>> table = ascii.read("data/cds/multi/lhs2065.dat", readme="data/cds/multi/ReadMe")
+      >>> table = ascii.read("data/cds/glob/lmxbrefs.dat", readme="data/cds/glob/ReadMe")
+
+    The table name and the CDS ReadMe file can be entered as URLs.  This can be used
+    to directly load tables from the Internet.  For example, Vizier tables from the
+    CDS::
+
+      >>> table = ascii.read("ftp://cdsarc.u-strasbg.fr/pub/cats/VII/253/snrs.dat",
+      ...             readme="ftp://cdsarc.u-strasbg.fr/pub/cats/VII/253/ReadMe")
+
+    If the header (ReadMe) and data are stored in a single file and there
+    is content between the header and the data (for instance Notes), then the
+    parsing process may fail.  In this case you can instruct the reader to
+    guess the actual start of the data by supplying ``data_start='guess'`` in the
+    call to the ``ascii.read()`` function.  You should verify that the output
+    data table matches expectation based on the input CDS file.
 
     **Using a reader object**
 
@@ -259,35 +258,70 @@ class Cds(core.BaseReader):
     ``InconsistentTableError`` is raised if the ``readme`` file does not
     have header information for the given table.
 
-      >>> readme = "t/vizier/ReadMe"
+      >>> readme = "data/vizier/ReadMe"
       >>> r = ascii.get_reader(ascii.Cds, readme=readme)
-      >>> table = r.read("t/vizier/table1.dat")
+      >>> table = r.read("data/vizier/table1.dat")
       >>> # table5.dat has the same ReadMe file
-      >>> table = r.read("t/vizier/table5.dat")
+      >>> table = r.read("data/vizier/table5.dat")
 
     If no ``readme`` parameter is specified, then the header
     information is assumed to be at the top of the given table.
 
       >>> r = ascii.get_reader(ascii.Cds)
-      >>> table = r.read("t/cds.dat")
+      >>> table = r.read("data/cds.dat")
       >>> #The following gives InconsistentTableError, since no
       >>> #readme file was given and table1.dat does not have a header.
-      >>> table = r.read("t/vizier/table1.dat")
+      >>> table = r.read("data/vizier/table1.dat")
       Traceback (most recent call last):
         ...
       InconsistentTableError: No CDS section delimiter found
 
     Caveats:
 
-    * The Units and Explanations are available in the column ``units`` and
+    * The Units and Explanations are available in the column ``unit`` and
       ``description`` attributes, respectively.
     * The other metadata defined by this format is not available in the output table.
     """
+    _format_name = 'cds'
+    _io_registry_format_aliases = ['cds']
+    _io_registry_can_write = False
+    _description = 'CDS format table'
+
+    data_class = CdsData
+    header_class = CdsHeader
+
     def __init__(self, readme=None):
-        core.BaseReader.__init__(self)
-        self.header = CdsHeader(readme)
-        self.data = CdsData()
+        super().__init__()
+        self.header.readme = readme
 
     def write(self, table=None):
         """Not available for the Cds class (raises NotImplementedError)"""
         raise NotImplementedError
+
+    def read(self, table):
+        # If the read kwarg `data_start` is 'guess' then the table may have extraneous
+        # lines between the end of the header and the beginning of data.
+        if self.data.start_line == 'guess':
+            # Replicate the first part of BaseReader.read up to the point where
+            # the table lines are initially read in.
+            with suppress(TypeError):
+                # For strings only
+                if os.linesep not in table + '':
+                    self.data.table_name = os.path.basename(table)
+
+            self.data.header = self.header
+            self.header.data = self.data
+
+            # Get a list of the lines (rows) in the table
+            lines = self.inputter.get_lines(table)
+
+            # Now try increasing data.start_line by one until the table reads successfully.
+            # For efficiency use the in-memory list of lines instead of `table`, which
+            # could be a file.
+            for data_start in range(len(lines)):
+                self.data.start_line = data_start
+                with suppress(Exception):
+                    table = super().read(lines)
+                    return table
+        else:
+            return super().read(table)

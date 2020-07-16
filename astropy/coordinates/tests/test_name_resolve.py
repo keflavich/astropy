@@ -4,23 +4,24 @@
 This module contains tests for the name resolve convenience module.
 """
 
-# Standard library
 import time
-import urllib,urllib2
+import urllib.request
 
-# Third party
-import numpy as np
 import pytest
+import numpy as np
 
-# Astropy
-from ..name_resolve import get_icrs_coordinates, NameResolveError, \
-                           SESAME_DATABASE, _parse_response
-from ..builtin_systems import ICRSCoordinates, FK5Coordinates, FK4Coordinates, \
-                              GalacticCoordinates
-from ...tests.helper import remote_data
+from astropy.coordinates.name_resolve import (get_icrs_coordinates,
+                                              NameResolveError,
+                                              sesame_database, _parse_response,
+                                              sesame_url)
+from astropy.coordinates.sky_coordinate import SkyCoord
+from astropy.config import paths
+from astropy import units as u
+
+from pytest_remotedata.disable_internet import no_internet
 
 _cached_ngc3642 = dict()
-_cached_ngc3642["simbad"] = """# ngc 3642	#Q22523669
+_cached_ngc3642["simbad"] = """# NGC 3642    #Q22523669
 #=S=Simbad (via url):    1
 %@ 503952
 %I.0 NGC 3642
@@ -35,16 +36,16 @@ _cached_ngc3642["simbad"] = """# ngc 3642	#Q22523669
 
 #====Done (2013-Feb-12,16:37:11z)===="""
 
-_cached_ngc3642["vizier"] = """# ngc 3642	#Q22523677
+_cached_ngc3642["vizier"] = """# NGC 3642    #Q22523677
 #=V=VizieR (local):    1
-%J 170.56 +59.08 = 11:22.2     +59:05     
+%J 170.56 +59.08 = 11:22.2     +59:05
 %I.0 {NGC} 3642
 
 
 
 #====Done (2013-Feb-12,16:37:42z)===="""
 
-_cached_ngc3642["all"] = """# ngc3642	#Q22523722
+_cached_ngc3642["all"] = """# ngc3642    #Q22523722
 #=S=Simbad (via url):    1
 %@ 503952
 %I.0 NGC 3642
@@ -58,7 +59,7 @@ _cached_ngc3642["all"] = """# ngc3642	#Q22523722
 
 
 #=V=VizieR (local):    1
-%J 170.56 +59.08 = 11:22.2     +59:05     
+%J 170.56 +59.08 = 11:22.2     +59:05
 %I.0 {NGC} 3642
 
 
@@ -67,11 +68,11 @@ _cached_ngc3642["all"] = """# ngc3642	#Q22523722
 #====Done (2013-Feb-12,16:39:48z)===="""
 
 _cached_castor = dict()
-_cached_castor["all"] = """# castor	#Q22524249
+_cached_castor["all"] = """# castor    #Q22524249
 #=S=Simbad (via url):    1
 %@ 983633
 %I.0 NAME CASTOR
-%C.0 ** 
+%C.0 **
 %C.N0 12.13.00.00
 %J 113.649471640 +31.888282216 = 07:34:35.87 +31:53:17.8
 %J.E [34.72 25.95 0] A 2007A&A...474..653V
@@ -89,11 +90,11 @@ _cached_castor["all"] = """# castor	#Q22524249
 
 #====Done (2013-Feb-12,16:52:02z)===="""
 
-_cached_castor["simbad"] = """# castor	#Q22524495
+_cached_castor["simbad"] = """# castor    #Q22524495
 #=S=Simbad (via url):    1
 %@ 983633
 %I.0 NAME CASTOR
-%C.0 ** 
+%C.0 **
 %C.N0 12.13.00.00
 %J 113.649471640 +31.888282216 = 07:34:35.87 +31:53:17.8
 %J.E [34.72 25.95 0] A 2007A&A...474..653V
@@ -105,62 +106,103 @@ _cached_castor["simbad"] = """# castor	#Q22524495
 
 #====Done (2013-Feb-12,17:00:39z)===="""
 
-@remote_data
+
+@pytest.mark.remote_data
 def test_names():
 
     # First check that sesame is up
-    if urllib.urlopen("http://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame").getcode() != 200:
+    if urllib.request.urlopen("http://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame").getcode() != 200:
         pytest.skip("SESAME appears to be down, skipping test_name_resolve.py:test_names()...")
 
     with pytest.raises(NameResolveError):
         get_icrs_coordinates("m87h34hhh")
-    
+
     try:
-        icrs = get_icrs_coordinates("ngc 3642")
+        icrs = get_icrs_coordinates("NGC 3642")
     except NameResolveError:
-        ra,dec = _parse_response(_cached_ngc3642["all"])
-        icrs = ICRSCoordinates(ra, dec, unit=(u.degree, u.degree))
-        
-    icrs_true = ICRSCoordinates("11h 22m 18.014s", "59d 04m 27.27s")
-    np.testing.assert_almost_equal(icrs.ra.degrees, icrs_true.ra.degrees, 3)
-    np.testing.assert_almost_equal(icrs.dec.degrees, icrs_true.dec.degrees, 3)
-    
+        ra, dec = _parse_response(_cached_ngc3642["all"])
+        icrs = SkyCoord(ra=float(ra)*u.degree, dec=float(dec)*u.degree)
+
+    icrs_true = SkyCoord(ra="11h 22m 18.014s", dec="59d 04m 27.27s")
+
+    # use precision of only 1 decimal here and below because the result can
+    # change due to Sesame server-side changes.
+    np.testing.assert_almost_equal(icrs.ra.degree, icrs_true.ra.degree, 1)
+    np.testing.assert_almost_equal(icrs.dec.degree, icrs_true.dec.degree, 1)
+
     try:
         icrs = get_icrs_coordinates("castor")
     except NameResolveError:
-        ra,dec = _parse_response(_cached_castor["all"])
-        icrs = ICRSCoordinates(ra, dec, unit=(u.degree, u.degree))
+        ra, dec = _parse_response(_cached_castor["all"])
+        icrs = SkyCoord(ra=float(ra)*u.degree, dec=float(dec)*u.degree)
 
-    icrs_true = ICRSCoordinates("07h 34m 35.87s", "+31d 53m 17.8s")
-    np.testing.assert_almost_equal(icrs.ra.degrees, icrs_true.ra.degrees, 3)
-    np.testing.assert_almost_equal(icrs.dec.degrees, icrs_true.dec.degrees, 3)
+    icrs_true = SkyCoord(ra="07h 34m 35.87s", dec="+31d 53m 17.8s")
+    np.testing.assert_almost_equal(icrs.ra.degree, icrs_true.ra.degree, 1)
+    np.testing.assert_almost_equal(icrs.dec.degree, icrs_true.dec.degree, 1)
 
-@remote_data
-def test_database_specify():
 
-    # First check that sesame is up
-    if urllib.urlopen("http://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame").getcode() != 200:
-        pytest.skip("SESAME appears to be down, skipping test_database_specify.py:test_names()...")
+@pytest.mark.remote_data
+def test_name_resolve_cache(tmpdir):
+    from astropy.utils.data import _get_download_cache_locs, get_cached_urls
+    import shelve
 
-    name = "ngc 3642"
-    for db in ["simbad", "vizier", "all"]:
-        SESAME_DATABASE.set(db)
-        try:
-            icrs = ICRSCoordinates.from_name(name)
-        except NameResolveError:
-            ra,dec = _cached_ngc3642[db]
-            icrs = ICRSCoordinates(ra, dec, unit=(u.degree, u.degree))
+    target_name = "castor"
 
-        time.sleep(1)
+    temp_cache_dir = str(tmpdir.mkdir('cache'))
+    with paths.set_temp_cache(temp_cache_dir, delete=True):
+        download_dir, urlmapfn = _get_download_cache_locs()
 
-    name = "castor"
-    # Don't search ned or vizier since castor isn't in either
-    for db in ["simbad",  "all"]:
-        SESAME_DATABASE.set(db)
-        try:
-            icrs = ICRSCoordinates.from_name(name)
-        except NameResolveError:
-            ra,dec = _cached_castor[db]
-            icrs = ICRSCoordinates(ra, dec, unit=(u.degree, u.degree))
+        with shelve.open(urlmapfn) as url2hash:
+            assert len(url2hash) == 0
+
+        icrs1 = get_icrs_coordinates(target_name, cache=True)
+
+        # This is a weak test: we just check to see that a url is added to the
+        #  cache!
+        with shelve.open(urlmapfn) as url2hash:
+            assert len(url2hash) == 1
+            url = get_cached_urls()[0]
+            assert 'http://cdsweb.u-strasbg.fr/cgi-bin/nph-sesame/' in url
+
+        # Try reloading coordinates, now should just reload cached data:
+        with no_internet():
+            icrs2 = get_icrs_coordinates(target_name, cache=True)
+
+        with shelve.open(urlmapfn) as url2hash:
+            assert len(url2hash) == 1
+
+        assert u.allclose(icrs1.ra, icrs2.ra)
+        assert u.allclose(icrs1.dec, icrs2.dec)
+
+
+def test_names_parse():
+    # a few test cases for parsing embedded coordinates from object name
+    test_names = ['CRTS SSS100805 J194428-420209',
+                  'MASTER OT J061451.7-272535.5',
+                  '2MASS J06495091-0737408',
+                  '1RXS J042555.8-194534',
+                  'SDSS J132411.57+032050.5',
+                  'DENIS-P J203137.5-000511',
+                  '2QZ J142438.9-022739',
+                  'CXOU J141312.3-652013']
+    for name in test_names:
+        sc = get_icrs_coordinates(name, parse=True)
+
+
+@pytest.mark.remote_data
+@pytest.mark.parametrize(("name", "db_dict"), [('NGC 3642', _cached_ngc3642),
+                                               ('castor', _cached_castor)])
+def test_database_specify(name, db_dict):
+    # First check that at least some sesame mirror is up
+    for url in sesame_url.get():
+        if urllib.request.urlopen(url).getcode() == 200:
+            break
+    else:
+        pytest.skip("All SESAME mirrors appear to be down, skipping "
+                    "test_name_resolve.py:test_database_specify()...")
+
+    for db in db_dict.keys():
+        with sesame_database.set(db):
+            icrs = SkyCoord.from_name(name)
 
         time.sleep(1)

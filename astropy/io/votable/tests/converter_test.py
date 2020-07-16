@@ -1,105 +1,163 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
+
+import io
+
 # THIRD-PARTY
 import numpy as np
 from numpy.testing import assert_array_equal
+import pytest
 
 # LOCAL
-from .. import converters
-from .. import exceptions
-from .. import tree
-from ....tests.helper import raises
+from astropy.io.votable import converters
+from astropy.io.votable import exceptions
+from astropy.io.votable import tree
+
+from astropy.io.votable.table import parse_single_table
+from astropy.utils.data import get_pkg_data_filename
 
 
-@raises(exceptions.E13)
 def test_invalid_arraysize():
-    field = tree.Field(
-        None, name='broken', datatype='char', arraysize='foo')
-    converters.get_converter(field)
+    with pytest.raises(exceptions.E13):
+        field = tree.Field(
+            None, name='broken', datatype='char', arraysize='foo')
+        converters.get_converter(field)
 
 
-def test_oversize_char(recwarn):
-    config = {'pedantic': True}
-    field = tree.Field(
-        None, name='c', datatype='char',
-        config=config)
-    c = converters.get_converter(field, config=config)
-    w = recwarn.pop(exceptions.W47)
+def test_oversize_char():
+    config = {'verify': 'exception'}
+    with pytest.warns(exceptions.W47) as w:
+        field = tree.Field(
+            None, name='c', datatype='char',
+            config=config)
+        c = converters.get_converter(field, config=config)
+    assert len(w) == 1
 
-    c.parse(u"XXX")
-    w = recwarn.pop(exceptions.W46)
+    with pytest.warns(exceptions.W46) as w:
+        c.parse("XXX")
+    assert len(w) == 1
 
 
 def test_char_mask():
-    config = {'pedantic': True}
-    field = tree.Field(
-        None, name='c', datatype='char',
-        config=config)
+    config = {'verify': 'exception'}
+    field = tree.Field(None, name='c', arraysize='1', datatype='char',
+                       config=config)
     c = converters.get_converter(field, config=config)
     assert c.output("Foo", True) == ''
 
 
-def test_oversize_unicode(recwarn):
-    config = {'pedantic': True}
-    field = tree.Field(
-        None, name='c2', datatype='unicodeChar',
-        config=config)
-    c = converters.get_converter(field, config=config)
-
-    c.parse(u"XXX")
-    w = recwarn.pop(exceptions.W46)
+def test_oversize_unicode():
+    config = {'verify': 'exception'}
+    with pytest.warns(exceptions.W46) as w:
+        field = tree.Field(
+            None, name='c2', datatype='unicodeChar',
+            arraysize='1', config=config)
+        c = converters.get_converter(field, config=config)
+        c.parse("XXX")
+    assert len(w) == 1
 
 
 def test_unicode_mask():
-    config = {'pedantic': True}
-    field = tree.Field(
-        None, name='c', datatype='unicodeChar',
-        config=config)
+    config = {'verify': 'exception'}
+    field = tree.Field(None, name='c', arraysize='1', datatype='unicodeChar',
+                       config=config)
     c = converters.get_converter(field, config=config)
-    assert c.output(u"Foo", True) == u''
+    assert c.output("Foo", True) == ''
 
 
-@raises(exceptions.E02)
+def test_unicode_as_char():
+    config = {'verify': 'exception'}
+    field = tree.Field(
+        None, name='unicode_in_char', datatype='char',
+        arraysize='*', config=config)
+    c = converters.get_converter(field, config=config)
+
+    # Test parsing.
+    c.parse('XYZ')  # ASCII succeeds
+    with pytest.warns(
+            exceptions.W55,
+            match=r'FIELD \(unicode_in_char\) has datatype="char" but contains non-ASCII value'):
+        c.parse("zła")  # non-ASCII
+
+    # Test output.
+    c.output('XYZ', False)  # ASCII str succeeds
+    c.output(b'XYZ', False)  # ASCII bytes succeeds
+    value = 'zła'
+    value_bytes = value.encode('utf-8')
+    with pytest.warns(
+            exceptions.E24,
+            match=r'E24: Attempt to write non-ASCII value'):
+        c.output(value, False)  # non-ASCII str raises
+    with pytest.warns(
+            exceptions.E24,
+            match=r'E24: Attempt to write non-ASCII value'):
+        c.output(value_bytes, False)  # non-ASCII bytes raises
+
+
+def test_unicode_as_char_binary():
+    config = {'verify': 'exception'}
+
+    field = tree.Field(
+        None, name='unicode_in_char', datatype='char',
+        arraysize='*', config=config)
+    c = converters.get_converter(field, config=config)
+    c._binoutput_var('abc', False)  # ASCII succeeds
+    with pytest.raises(exceptions.E24, match=r"E24: Attempt to write non-ASCII value"):
+        c._binoutput_var('zła', False)
+
+    field = tree.Field(
+        None, name='unicode_in_char', datatype='char',
+        arraysize='3', config=config)
+    c = converters.get_converter(field, config=config)
+    c._binoutput_fixed('xyz', False)
+    with pytest.raises(exceptions.E24, match=r"E24: Attempt to write non-ASCII value"):
+        c._binoutput_fixed('zła', False)
+
+
 def test_wrong_number_of_elements():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='int', arraysize='2x3*',
         config=config)
     c = converters.get_converter(field, config=config)
-    c.parse("2 3 4 5 6")
+    with pytest.raises(exceptions.E02):
+        c.parse("2 3 4 5 6")
 
 
-@raises(ValueError)
 def test_float_mask():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='float',
         config=config)
     c = converters.get_converter(field, config=config)
     assert c.parse('') == (c.null, True)
-    c.parse('null')
+    with pytest.raises(ValueError):
+        c.parse('null')
 
 
 def test_float_mask_permissive():
-    config = {'pedantic': False}
+    config = {'verify': 'ignore'}
     field = tree.Field(
         None, name='c', datatype='float',
         config=config)
+
+    # config needs to be also passed into parse() to work.
+    # https://github.com/astropy/astropy/issues/8775
     c = converters.get_converter(field, config=config)
-    assert c.parse('null') == (c.null, True)
+    assert c.parse('null', config=config) == (c.null, True)
 
 
-@raises(exceptions.E02)
 def test_complex_array_vararray():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='floatComplex', arraysize='2x3*',
         config=config)
     c = converters.get_converter(field, config=config)
-    c.parse("2 3 4 5 6")
+    with pytest.raises(exceptions.E02):
+        c.parse("2 3 4 5 6")
 
 
 def test_complex_array_vararray2():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='floatComplex', arraysize='2x3*',
         config=config)
@@ -109,7 +167,7 @@ def test_complex_array_vararray2():
 
 
 def test_complex_array_vararray3():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='doubleComplex', arraysize='2x3*',
         config=config)
@@ -120,7 +178,7 @@ def test_complex_array_vararray3():
 
 
 def test_complex_vararray():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='doubleComplex', arraysize='*',
         config=config)
@@ -130,48 +188,49 @@ def test_complex_vararray():
     assert x[0][0] == complex(1, 2)
 
 
-@raises(exceptions.E03)
 def test_complex():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='doubleComplex',
         config=config)
     c = converters.get_converter(field, config=config)
-    x = c.parse("1 2 3")
+    with pytest.raises(exceptions.E03):
+        c.parse("1 2 3")
 
 
-@raises(exceptions.E04)
 def test_bit():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='bit',
         config=config)
     c = converters.get_converter(field, config=config)
-    x = c.parse("T")
+    with pytest.raises(exceptions.E04):
+        c.parse("T")
 
 
-def test_bit_mask(recwarn):
-    config = {'pedantic': True}
-    field = tree.Field(
-        None, name='c', datatype='bit',
-        config=config)
-    c = converters.get_converter(field, config=config)
-    c.output(True, True)
-    recwarn.pop(exceptions.W39)
+def test_bit_mask():
+    config = {'verify': 'exception'}
+    with pytest.warns(exceptions.W39) as w:
+        field = tree.Field(
+            None, name='c', datatype='bit',
+            config=config)
+        c = converters.get_converter(field, config=config)
+        c.output(True, True)
+    assert len(w) == 1
 
 
-@raises(exceptions.E05)
 def test_boolean():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='boolean',
         config=config)
     c = converters.get_converter(field, config=config)
-    c.parse('YES')
+    with pytest.raises(exceptions.E05):
+        c.parse('YES')
 
 
 def test_boolean_array():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
     field = tree.Field(
         None, name='c', datatype='boolean', arraysize='*',
         config=config)
@@ -180,17 +239,17 @@ def test_boolean_array():
     assert_array_equal(r, [True, False, True, False, False, True])
 
 
-@raises(exceptions.E06)
 def test_invalid_type():
-    config = {'pedantic': True}
-    field = tree.Field(
-        None, name='c', datatype='foobar',
-        config=config)
-    c = converters.get_converter(field, config=config)
+    config = {'verify': 'exception'}
+    with pytest.raises(exceptions.E06):
+        field = tree.Field(
+            None, name='c', datatype='foobar',
+            config=config)
+        converters.get_converter(field, config=config)
 
 
 def test_precision():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
 
     field = tree.Field(
         None, name='c', datatype='float', precision="E4",
@@ -205,22 +264,62 @@ def test_precision():
     assert c.output(266.248, False) == '266.2480'
 
 
-@raises(exceptions.W51)
 def test_integer_overflow():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
 
     field = tree.Field(
         None, name='c', datatype='int', config=config)
     c = converters.get_converter(field, config=config)
-    c.parse('-2208988800', config=config)
+    with pytest.raises(exceptions.W51):
+        c.parse('-2208988800', config=config)
 
 
 def test_float_default_precision():
-    config = {'pedantic': True}
+    config = {'verify': 'exception'}
 
     field = tree.Field(
         None, name='c', datatype='float', arraysize="4",
         config=config)
     c = converters.get_converter(field, config=config)
-    assert (c.output([1, 2, 3, 8.999999], [False, False, False, False]) ==
-            u'1 2 3 8.999999')
+    assert (c.output([1, 2, 3, 8.9990234375], [False, False, False, False]) ==
+            '1 2 3 8.9990234375')
+
+
+def test_vararray():
+    votable = tree.VOTableFile()
+    resource = tree.Resource()
+    votable.resources.append(resource)
+    table = tree.Table(votable)
+    resource.tables.append(table)
+
+    tabarr = []
+    heads = ['headA', 'headB', 'headC']
+    types = ["char", "double", "int"]
+
+    vals = [["A", 1.0, 2],
+            ["B", 2.0, 3],
+            ["C", 3.0, 4]]
+    for i in range(len(heads)):
+        tabarr.append(tree.Field(
+            votable, name=heads[i], datatype=types[i], arraysize="*"))
+
+    table.fields.extend(tabarr)
+    table.create_arrays(len(vals))
+    for i in range(len(vals)):
+        values = tuple(vals[i])
+        table.array[i] = values
+    buff = io.BytesIO()
+    votable.to_xml(buff)
+
+
+def test_gemini_v1_2():
+    '''
+    see Pull Request 4782 or Issue 4781 for details
+    '''
+    table = parse_single_table(get_pkg_data_filename('data/gemini.xml'))
+    assert table is not None
+
+    tt = table.to_table()
+    assert tt['access_url'][0] == (
+        'http://www.cadc-ccda.hia-iha.nrc-cnrc.gc.ca/data/pub/GEMINI/'
+        'S20120515S0064?runid=bx9b1o8cvk1qesrt')

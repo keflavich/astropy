@@ -1,5 +1,5 @@
 #-----------------------------------------------------------------------------
-# GNU makefile for building WCSLIB 4.17
+# GNU makefile for building WCSLIB 7.3
 #
 # Summary of the main targets
 # ---------------------------
@@ -32,9 +32,10 @@
 #
 # Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
 # http://www.atnf.csiro.au/people/Mark.Calabretta
-# $Id: GNUmakefile,v 4.17 2013/01/29 05:29:22 cal103 Exp $
+# $Id: GNUmakefile,v 7.3 2020/06/03 03:37:03 mcalabre Exp $
 #-----------------------------------------------------------------------------
 # Get configure settings.
+SUBDIR := .
 include makedefs
 
 ifeq "$(CHECK)" "nopgplot"
@@ -56,7 +57,7 @@ check tests :: show
 	-@ $(TIMER)
 	 @ for DIR in $(SUBDIRS) ; do \
 	     echo '' ; \
-	     $(MAKE) -i -C $$DIR cleaner ; \
+	     $(MAKE) -i -C $$DIR cleaner build ; \
 	   done
 	-@ echo ''
 	 @ for DIR in $(TSTDIRS) ; do \
@@ -82,7 +83,7 @@ install :
 	   done
 	   $(INSTALL) -m 444 wcsconfig.h wcsconfig_f77.h $(INCDIR)
 	-  if [ ! -d "$(DOCDIR)" ] ; then \
-	     $(INSTALL) -d -m 2775 $(DOCDIR) ; \
+	     $(INSTALL) -d -m 775 $(DOCDIR) ; \
 	   fi
 	   $(INSTALL) -m 444 CHANGES COPYING* README $(DOCDIR)
 	-  if [ -h $(DOCLINK) ] ; then \
@@ -90,15 +91,15 @@ install :
 	     $(LN_S) $(notdir $(DOCDIR)) $(DOCLINK) ; \
 	   fi
 	-  if [ ! -d "$(PDFDIR)" ] ; then \
-	     $(INSTALL) -d -m 2775 $(PDFDIR) ; \
+	     $(INSTALL) -d -m 775 $(PDFDIR) ; \
 	   fi
 	   $(INSTALL) -m 444 wcslib.pdf $(PDFDIR)
 	-  if [ ! -d "$(HTMLDIR)/html" ] ; then \
-	     $(INSTALL) -d -m 2775 $(HTMLDIR)/html ; \
+	     $(INSTALL) -d -m 775 $(HTMLDIR)/html ; \
 	   fi
 	   $(INSTALL) -m 444 html/* $(HTMLDIR)/html
 	   if [ ! -d "$(LIBDIR)/pkgconfig" ] ; then \
-	     $(INSTALL) -d -m 2775 $(LIBDIR)/pkgconfig ; \
+	     $(INSTALL) -d -m 775 $(LIBDIR)/pkgconfig ; \
 	   fi
 	   $(INSTALL) -m 444 wcslib.pc $(LIBDIR)/pkgconfig/wcslib.pc
 
@@ -141,12 +142,15 @@ config.status : configure
 	-@ $(TIMER)
 	-@ echo ''
 	-@ echo "Environment variables that affect 'configure':"
-	-@ echo "  CC       = $${CC-(undefined)}"
-	-@ echo "  CFLAGS   = $${CFLAGS-(undefined)}"
+	-@ echo "  FLEX     = $${FLEX-(undefined)}"
+	-@ echo "  FLFLAGS  = $${FLFLAGS-(undefined)}"
 	-@ echo "  CPP      = $${CPP-(undefined)}"
 	-@ echo "  CPPFLAGS = $${CPPFLAGS-(undefined)}"
+	-@ echo "  CC       = $${CC-(undefined)}"
+	-@ echo "  CFLAGS   = $${CFLAGS-(undefined)}"
 	-@ echo "  F77      = $${F77-(undefined)}"
 	-@ echo "  FFLAGS   = $${FFLAGS-(undefined)}"
+	-@ echo "  ARFLAGS  = $${ARFLAGS-(undefined)}"
 	-@ echo "  LDFLAGS  = $${LDFLAGS-(undefined)}"
 	-@ echo ''
 	   ./configure --no-create
@@ -187,9 +191,9 @@ dist :
 	   chmod 444 $(WCSLIBPKG).tar.bz2
 
 install_dist :
-	   scp -p $(WCSLIBPKG).tar.bz2 venice:/nfs/ftp/software/wcslib/
+	   scp -p $(WCSLIBPKG).tar.bz2 cal103@venice:/nfs/ftp/software/wcslib/
 	   mv -f  $(WCSLIBPKG).tar.bz2 ../wcslib-releases/
-	   ssh venice "cd /nfs/ftp/software/wcslib/ && \
+	   ssh cal103@venice "cd /nfs/ftp/software/wcslib/ && \
 	     rm -f wcslib.tar.bz2 && \
 	     ln -s $(WCSLIBPKG).tar.bz2 wcslib.tar.bz2"
 	   cp -fp CHANGES wcslib.pdf ~/public_html/WCS/

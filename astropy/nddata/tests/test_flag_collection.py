@@ -1,8 +1,10 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-from ...tests.helper import pytest
+
+
+import pytest
 import numpy as np
 
-from .. import FlagCollection
+from astropy.nddata import FlagCollection
 
 
 def test_init():
@@ -12,13 +14,15 @@ def test_init():
 def test_init_noshape():
     with pytest.raises(Exception) as exc:
         FlagCollection()
-    assert exc.value.args[0] == 'FlagCollection should be initialized with the shape of the data'
+    assert exc.value.args[0] == ('FlagCollection should be initialized with '
+                                 'the shape of the data')
 
 
 def test_init_notiterable():
     with pytest.raises(Exception) as exc:
         FlagCollection(shape=1.)
-    assert exc.value.args[0] == 'FlagCollection shape should be an iterable object'
+    assert exc.value.args[0] == ('FlagCollection shape should be '
+                                 'an iterable object')
 
 
 def test_setitem():
@@ -39,6 +43,7 @@ def test_setitem_invalid_type(value):
 
 def test_setitem_invalid_shape():
     f = FlagCollection(shape=(1, 2, 3))
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(ValueError) as exc:
         f['a'] = np.ones((3, 2, 1))
-    assert exc.value.args[0] == 'flags array shape (3, 2, 1) does not match data shape (1, 2, 3)'
+    assert exc.value.args[0].startswith('flags array shape')
+    assert exc.value.args[0].endswith('does not match data shape (1, 2, 3)')

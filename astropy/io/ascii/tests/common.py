@@ -1,27 +1,25 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-from __future__ import absolute_import
+
+
 import os
-from distutils import version
+
+
 import numpy as np
 
 
-from ... import ascii
-
-__all__ = ['raises', 'numpy_lt_1p5'
-           'assert_equal', 'assert_almost_equal', 'assert_true',
-           'setup_function', 'teardown_function', 'has_isnan']
-
-numpy_lt_1p5 = version.LooseVersion(np.__version__) < version.LooseVersion('1.5')
+__all__ = ['raises', 'assert_equal', 'assert_almost_equal',
+           'assert_true', 'setup_function', 'teardown_function',
+           'has_isnan']
 
 CWD = os.getcwd()
 TEST_DIR = os.path.dirname(__file__)
 
 has_isnan = True
 try:
-    from math import isnan
+    from math import isnan  # noqa
 except ImportError:
     try:
-        from numpy import isnan
+        from numpy import isnan  # noqa
     except ImportError:
         has_isnan = False
         print('Tests requiring isnan will fail')
@@ -40,8 +38,8 @@ def assert_equal(a, b):
     assert a == b
 
 
-def assert_almost_equal(a, b):
-    assert True
+def assert_almost_equal(a, b, **kwargs):
+    assert np.allclose(a, b, **kwargs)
 
 
 def assert_true(a):
@@ -102,10 +100,8 @@ def raises(*exceptions):
                 func(*arg, **kw)
             except exceptions:
                 pass
-            except:
-                raise
             else:
-                message = "%s() did not raise %s" % (name, valid)
+                message = f"{name}() did not raise {valid}"
                 raise AssertionError(message)
         newfunc = make_decorator(func)(newfunc)
         return newfunc

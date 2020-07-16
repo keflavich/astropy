@@ -1,9 +1,11 @@
+.. doctest-skip-all
+
 astropy.io.fits History
-=======================
+***********************
 
 Prior to its inclusion in Astropy, the `astropy.io.fits` package was a stand-
-alone package called `PyFITS`_.  Though for the time being active development
-is continuing on PyFITS, that development is also being merged into Astropy.
+alone package called `PyFITS`_.  PyFITS is no longer actively maintained, and
+its development is now solely in Astropy.
 This page documents the release history of PyFITS prior to its merge into
 Astropy.
 
@@ -12,23 +14,574 @@ Astropy.
    :local:
 
 
-3.2 (unreleased)
-----------------
+3.4.0 (2016-01-29)
+==================
+
+This is the last released version of PyFITS as a standalone package.
+
+
+3.3.0 (2014-07-17)
+==================
+
+New Features
+------------
+
+- Added new verification options ``fix+ignore``, ``fix+warn``,
+  ``fix+exception``, ``silentfix+ignore``, ``silentfix+warn``, and
+  ``silentfix+exception`` which give more control over how to report fixable
+  errors as opposed to unfixable errors.  See the "Verification" section in
+  the PyFITS documentation for more details.
+
+API Changes
+-----------
+
+- The ``pyfits.new_table`` function is now fully deprecated (though will not
+  be removed for a long time, considering how widely it is used).
+
+  Instead please use the more explicit ``pyfits.BinTableHDU.from_columns`` to
+  create a new binary table HDU, and the similar
+  ``pyfits.TableHDU.from_columns`` to create a new ASCII table.  These
+  otherwise accept the same arguments as ``pyfits.new_table`` which is now
+  just a wrapper for these.
+
+- The ``.fromstring`` classmethod of each HDU type has been simplified such
+  that, true to its namesake, it only initializes an HDU from a string
+  containing its header *and* data. (spacetelescope/PyFITS#64)
+
+- Fixed an issue where header wildcard matching (for example
+  ``header['DATE*']``) can be used to match *any* characters that might appear
+  in a keyword.  Previously this only matched keywords containing characters
+  in the set ``[0-9A-Za-z_]``.  Now this can also match a hyphen ``-`` and any
+  other characters, as some conventions like ``HIERARCH`` and record-valued
+  keyword cards allow a wider range of valid characters than standard FITS
+  keywords.
+
+- This will be the *last* release to support the following APIs that have been
+  marked deprecated since PyFITS v3.1:
+
+  - The ``CardList`` class, which was part of the old header implementation.
+
+  - The ``Card.key`` attribute.  Use ``Card.keyword`` instead.
+
+  - The ``Card.cardimage`` and ``Card.ascardimage`` attributes.  Use simply
+    ``Card.image`` or ``str(card)`` instead.
+
+  - The ``create_card`` factory function.  Simply use the normal ``Card``
+    constructor instead.
+
+  - The ``create_card_from_string`` factory function.  Use ``Card.fromstring``
+    instead.
+
+  - The ``upper_key`` function.  Use ``Card.normalize_keyword`` method instead
+    (this is not unlikely to be used outside of PyFITS itself, but it was
+    technically public API).
+
+  - The usage of ``Header.update`` with ``Header.update(keyword, value,
+    comment)`` arguments.  ``Header.update`` should only be used analogously
+    to ``dict.update``.  Use ``Header.set`` instead.
+
+  - The ``Header.ascard`` attribute.  Use ``Header.cards`` instead for a list
+    of all the ``Card`` objects in the header.
+
+  - The ``Header.rename_key`` method.  Use ``Header.rename_keyword`` instead.
+
+  - The ``Header.get_history`` method.  Use ``header['HISTORY']`` instead
+    (normal keyword lookup).
+
+  - The ``Header.get_comment`` method.  Use ``header['COMMENT']`` instead.
+
+  - The ``Header.toTxtFile`` method.  Use ``header.totextfile`` instead.
+
+  - The ``Header.fromTxtFile`` method.  Use ``Header.fromtextfile`` instead.
+
+  - The ``pyfits.tdump`` and ``tcreate`` functions.  Use ``pyfits.tabledump``
+    and ``pyfits.tableload`` respectively.
+
+  - The ``BinTableHDU.tdump`` and ``tcreate`` methods.  Use
+    ``BinTableHDU.dump`` and ``BinTableHDU.load`` respectively.
+
+  - The ``txtfile`` argument to the ``Header`` constructor.  Use
+    ``Header.fromfile`` instead.
+
+  - The ``startColumn`` and ``endColumn`` arguments to the ``FITS_record``
+    constructor.  These are unlikely to be used by any user code.
+
+  These deprecated interfaces will be removed from the development version of
+  PyFITS following the v3.3 release (they will still be available in any
+  v3.3.x bugfix releases, however).
+
+Other Changes and Additions
+---------------------------
+
+- PyFITS has switched to a unified code base which supports Python 2.5 through
+  3.4 simultaneously without translation.  This *shouldn't* have any
+  significant performance impacts, but please report if anything seems
+  noticeably slower.  As a reminder, support for Python 2.5 will be ended
+  after PyFITS 3.3.x.
+
+- Warnings for deprecated APIs in PyFITS are now always displayed by default.
+  This is in line with a similar change made recently to Astropy:
+  https://github.com/astropy/astropy/pull/1871
+  To disable PyFITS deprecation warnings in scripts one may call
+  ``pyfits.ignore_deprecation_warnings()`` after importing PyFITS.
+
+- ``Card`` objects have a new ``is_blank`` attribute which returns ``True`` if
+  the card represents a blank card (no keyword, value, or comment) and
+  ``False`` otherwise.
+
+Bug Fixes
+---------
+
+- Fixed a regression where it was not possible to save an empty "compressed"
+  image to a file (in this case there is nothing to compress, hence the
+  quotes, but trying to do so caused a crash). (spacetelescope/PyFITS#69)
+
+- Fixed a regression that may have been introduced in v3.2.1 with writing
+  compressed image HDUs, particularly compressed images using a non-empty
+  GZIP_COMPRESSED_DATA column. (spacetelescope/#71)
+
+
+3.2.4 (2014-06-02)
+==================
+
+- Fixed a regression where multiple consecutive calls of the ``writeto``
+  method on the same HDU but to different files could lead to corrupt data or
+  crashes on the subsequent calls after the first. (spacetelescope/PyFITS#40)
+
+
+3.2.3 (2014-05-14)
+==================
+
+- Nominal support for Python 3.4.
+
+- Fixed a bug with using the ``tabledump`` and ``tableload`` functions with
+  tables containing array columns (columns in which each element is an array
+  instead of a single scalar value). (spacetelescope/PyFITS#22)
+
+- Fixed an issue where PyFITS allowed newline characters in header values and
+  comments. (spacetelescope/PyFITS#51)
+
+- Fixed pickling of ``FITS_rec`` (table data) objects.
+  (spacetelescope/PyFITS#53)
+
+- Improved behavior when writing large compressed images on OSX by removing an
+  unnecessary check for platform architecture. (spacetelescope/PyFITS#57)
+
+- Allow reading FITS files from file-like objects that do not have a
+  ``.closed`` attribute (and as such may not even have an "open" vs. "closed"
+  concept). (spacetelescope/PyFITS#56)
+
+- Fixed duplicate insertion of commentary keywords on compressed image
+  headers. (spacetelescope/PyFITS#58)
+
+- Fixed minor issue with comparison of header commentary card values.
+  (spacetelescope/PyFITS#59)
+
+
+3.1.6 (2014-05-14)
+==================
+
+- Nominal support for Python 3.4.
+
+- Fixed a bug with using the ``tabledump`` and ``tableload`` functions with
+  tables containing array columns (columns in which each element is an array
+  instead of a single scalar value). (Backported from 3.2.3)
+
+- Fixed an issue where PyFITS allowed newline characters in header values and
+  comments. (Backported from 3.2.3)
+
+- Fixed pickling of ``FITS_rec`` (table data) objects.
+  (Backported from 3.2.3)
+
+- Improved behavior when writing large compressed images on OSX by removing an
+  unnecessary check for platform architecture. (Backported from 3.2.3)
+
+- Allow reading FITS files from file-like objects that do not have a
+  ``.closed`` attribute (and as such may not even have an "open" vs. "closed"
+  concept). (Backported from 3.2.3)
+
+- Fixed minor issue with comparison of header commentary card values.
+  (Backported from 3.2.3)
+
+
+3.2.2 (2014-03-25)
+==================
+
+- Fixed a regression on deletion of record-valued keyword cards using
+  the Header wildcard syntax.  This was intended to be fixed before the
+  v3.2.1 release.
+
+
+3.1.5 (2014-03-25)
+==================
+
+- Fixed a regression on deletion of record-valued keyword cards using
+  the Header wildcard syntax.  This was intended to be fixed before the
+  v3.1.4 release.
+
+
+3.2.1 (2014-03-04)
+==================
+
+- Nominal support for the upcoming Python 3.4.
+
+- Added missing features from the ``Header.insert()`` method that were
+  intended for inclusion in the original 3.1 release:  In addition to
+  accepting an integer index as the first argument, it also supports supplying
+  a keyword name as the first argument for insertion relative to a specific
+  keyword.  It also now supports an optional ``after`` argument.  If
+  ``after=True`` the insertion is made below the insertion point instead
+  of above it. (spacetelescope/PyFITS#12)
+
+- Fixed support for broadcasting of values assigned to table columns.
+  (spacetelescope/PyFITS#48)
+
+- A grab bag of minor performance improvements in headers.
+  (spacetelescope/PyFITS#46)
+
+- Fix an unrelated error that occurred when instantiating a ``ColDefs`` object
+  with invalid input.
+
+- Fixed an issue where opening an image containing pseudo-unsigned integers
+  and immediately writing it to a new file using the ``writeto`` method would
+  drop the scale factors that identified the data as unsigned.
+
+- Fixed a bug where writing a file with ``checksum=True`` did not add the
+  checksum on new files. (spacetelescope/PyFITS#8)
+
+- Fixed an issue where validating an HDU's checksums removed the checksum from
+  that HDU's header entirely (even if it was valid.)
+
+- Fixed checksums on compressed images, so that the ``ZHECKSUM`` and
+  ``ZDATASUM`` contain a checksum of the original image HDU, while
+  ``CHECKSUM`` and ``DATASUM`` contain checksums of the compressed image HDU.
+  This feature was supposed to be supported in 3.2, but the support was buggy.
+
+- Fixed an issue where the size of the heap was sometimes not computed
+  properly when writing an existing table containing variable-length array
+  columns to a new FITS file.  This could result in corruption in the new FITS
+  file. (spacetelescope/PyFITS#47)
+
+- Fixed issue with updates to the header of ``CompImageHDU`` objects not being
+  preserved on save. (spacetelescope/PyFITS#23)
+
+- Fixed a bug where a boolean value of ``True`` in a header could not be
+  replaced with the integer 1, and likewise for ``False`` and 0 and vice
+  versa.
+
+- Fixed an issue similar to the above one but for numeric values--now
+  replacing a header value with an equivalent numeric value will up/downcast
+  that value.  For example replacing '0' with '0.0' will write '0.0' to the
+  header so that it is returned as a floating point value.  Likewise a float
+  can be downcast to an integer. (spacetelescope/PyFITS#49)
+
+- A handful of Python 3 compatibility fixes, especially for compatibility
+  with the upcoming Python 3.4.
+
+- Fixed unrelated crash when a header contains an invalid END card (for
+  example "END = ").  This resulted in a cryptic traceback.  Now headers like
+  this will detect "clearly intended" END cards and produce a warning about
+  their invalidity and fix them. (#217)
+
+- Allowed a sequence of ``Column`` objects to be passed in as the main
+  argument to ``FITS_rec.from_columns`` as the documentation suggests should
+  be possible.
+
+- Fixed a display formatting issue with fitsdiff where sometimes it did not
+  show the difference between two floating point numbers if they were the same
+  up to some low number of digits. (spacetelescope/PyFITS#21)
+
+- Fixed an issue where Python 2 sometimes allowed non-ASCII strings to be
+  assigned as header values if they were assigned as old-style ``str`` objects
+  and not ``unicode`` objects. (spacetelescope/PyFITS#37)
+
+
+3.1.4 (2014-03-04)
+==================
+
+- Added missing features from the ``Header.insert()`` method that were
+  intended for inclusion in the original 3.1 release:  In addition to
+  accepting an integer index as the first argument, it also supports supplying
+  a keyword name as the first argument for insertion relative to a specific
+  keyword.  It also now supports an optional ``after`` argument.  If
+  ``after=True`` the insertion is made below the insertion point instead
+  of above it. (Backported from 3.2.1)
+
+- A grab bag of minor performance improvements in headers.
+  (Backported from 3.2.1)
+
+- Fixed an issue where opening an image containing pseudo-unsigned integers
+  and immediately writing it to a new file using the ``writeto`` method would
+  drop the scale factors that identified the data as unsigned.
+  (Backported from 3.2.1)
+
+- Fixed a bug where writing a file with ``checksum=True`` did not add the
+  checksum on new files. (Backported from 3.2.1)
+
+- Fixed an issue where validating an HDU's checksums removed the checksum from
+  that HDU's header entirely (even if it was valid.)
+  (Backported from 3.2.1)
+
+- Fixed an issue where the size of the heap was sometimes not computed
+  properly when writing an existing table containing variable-length array
+  columns to a new FITS file.  This could result in corruption in the new FITS
+  file. (Backported from 3.2.1)
+
+- Fixed a bug where a boolean value of ``True`` in a header could not be
+  replaced with the integer 1, and likewise for ``False`` and 0 and vice
+  versa. (Backported from 3.2.1)
+
+- Fixed an issue similar to the above one but for numeric values--now
+  replacing a header value with an equivalent numeric value will up/downcast
+  that value.  For example replacing '0' with '0.0' will write '0.0' to the
+  header so that it is returned as a floating point value.  Likewise a float
+  can be downcast to an integer. (Backported from 3.2.1)
+
+- Fixed unrelated crash when a header contains an invalid END card (for
+  example "END = ").  This resulted in a cryptic traceback.  Now headers like
+  this will detect "clearly intended" END cards and produce a warning about
+  their invalidity and fix them. (Backported from 3.2.1)
+
+- Fixed a display formatting issue with fitsdiff where sometimes it did not
+  show the difference between two floating point numbers if they were the same
+  up to some low number of digits. (Backported from 3.2.1)
+
+- Fixed an issue where Python 2 sometimes allowed non-ASCII strings to be
+  assigned as header values if they were assigned as old-style ``str`` objects
+  and not ``unicode`` objects. (Backported from 3.2.1)
+
+
+3.0.13 (2014-03-04)
+===================
+
+- Fixed a bug where writing a file with ``checksum=True`` did not add the
+  checksum on new files. (Backported from 3.2.1)
+
+- Fixed an issue where validating an HDU's checksums removed the checksum from
+  that HDU's header entirely (even if it was valid.)
+  (Backported from 3.2.1)
+
+
+3.2 (2013-11-26)
+================
+
+Highlights
+----------
 
 - Rewrote CFITSIO-based backend for handling tile compression of FITS files.
   It now uses a standard CFITSIO instead of heavily modified pieces of CFITSIO
-  as before.  PyFITS ships with its own copy of CFITSIO v3.30, but system
+  as before.  PyFITS ships with its own copy of CFITSIO v3.35 which supports
+  the latest version of the Tiled Image Convention (v2.3), but system
   packagers may choose instead to strip this out in favor of a
   system-installed version of CFITSIO.  Earlier versions may work, but nothing
   earlier than 3.28 has been tested yet. (#169)
 
-- The new compression code also adds support for the ZQUANTIZ keyword added in
-  more recent versions of this FITS Tile Compression spec. This includes
-  support for lossless compression with GZIP. (#198)
+- Added support for reading and writing tables using the Q format for columns.
+  The Q format is identical to the P format (variable-length arrays) except
+  that it uses 64-bit integers for the data descriptors, allowing more than
+  4 GB of variable-length array data in a single table. (#160)
+
+- Added initial support for table columns containing pseudo-unsigned integers.
+  This is currently enabled by using the ``uint=True`` option when opening
+  files; any table columns with the correct BZERO value will be interpreted
+  and returned as arrays of unsigned integers.
+
+- Some refactoring of the table and ``FITS_rec`` modules in order to better
+  separate the details of the FITS binary and ASCII table data structures from
+  the HDU data structures that encapsulate them.  Most of these changes should
+  not be apparent to users (but see API Changes below).
 
 
-3.1.2 (unreleased)
-------------------
+API Changes
+-----------
+
+- Assigning to values in ``ColDefs.names``, ``ColDefs.formats``,
+  ``ColDefs.nulls`` and other attributes of ``ColDefs`` instances that return
+  lists of column properties is no longer supported.  Assigning to those lists
+  will no longer update the corresponding columns.  Instead, please just
+  modify the ``Column`` instances directly (``Column.name``, ``Column.null``,
+  etc.)
+
+- The ``pyfits.new_table`` function is marked "pending deprecation".  This
+  does not mean it will be removed outright or that its functionality has
+  changed.  It will likely be replaced in the future for a function with
+  similar, if not subtly different functionality.  A better, if not slightly
+  more verbose approach is to use ``pyfits.FITS_rec.from_columns`` to create
+  a new ``FITS_rec`` table--this has the same interface as
+  ``pyfits.new_table``.  The difference is that it returns a plan ``FITS_rec``
+  array, and not an HDU instance.  This ``FITS_rec`` object can then be used
+  as the data argument in the constructors for ``BinTableHDU`` (for binary
+  tables) or ``TableHDU`` (for ASCII tables).  This is analogous to creating
+  an ``ImageHDU`` by passing in an image array.
+  ``pyfits.FITS_rec.from_columns`` is just a simpler way of creating a
+  FITS-compatible recarray from a FITS column specification.
+
+- The ``updateHeader``, ``updateHeaderData``, and ``updateCompressedData``
+  methods of the ``CompDataHDU`` class are pending deprecation and moved to
+  internal methods.  The operation of these methods depended too much on
+  internal state to be used safely by users; instead they are invoked
+  automatically in the appropriate places when reading/writing compressed image
+  HDUs.
+
+- The ``CompDataHDU.compData`` attribute is pending deprecation in favor of
+  the clearer and more PEP-8 compatible ``CompDataHDU.compressed_data``.
+
+- The constructor for ``CompDataHDU`` has been changed to accept new keyword
+  arguments.  The new keyword arguments are essentially the same, but are in
+  underscore_separated format rather than camelCase format.  The old arguments
+  are still pending deprecation.
+
+- The internal attributes of HDU classes ``_hdrLoc``, ``_datLoc``, and
+  ``_datSpan`` have been replaced with ``_header_offset``, ``_data_offset``,
+  and ``_data_size`` respectively.  The old attribute names are still pending
+  deprecation.  This should only be of interest to advanced users who have
+  created their own HDU subclasses.
+
+- The following previously deprecated functions and methods have been removed
+  entirely: ``createCard``, ``createCardFromString``, ``upperKey``,
+  ``ColDefs.data``, ``setExtensionNameCaseSensitive``, ``_File.getfile``,
+  ``_TableBaseHDU.get_coldefs``, ``Header.has_key``, ``Header.ascardlist``.
+
+  If you run your code with a previous version of PyFITS (>= 3.0, < 3.2) with
+  the ``python -Wd`` argument, warnings for all deprecated interfaces still in
+  use will be displayed.
+
+- Interfaces that were pending deprecation are now fully deprecated.  These
+  include: ``create_card``, ``create_card_from_string``, ``upper_key``,
+  ``Header.get_history``, and ``Header.get_comment``.
+
+- The ``.name`` attribute on HDUs is now directly tied to the HDU's header, so
+  that if ``.header['EXTNAME']`` changes so does ``.name`` and vice-versa.
+
+- The ``pyfits.file.PYTHON_MODES`` constant dict was renamed to
+  ``pyfits.file.PYFITS_MODES`` which better reflects its purpose.  This is
+  rarely used by client code, however.  Support for the old name will be
+  removed by PyFITS 3.4.
+
+
+Other Changes and Additions
+---------------------------
+
+- The new compression code also adds support for the ZQUANTIZ and ZDITHER0
+  keywords added in more recent versions of this FITS Tile Compression spec.
+  This includes support for lossless compression with GZIP. (#198) By default
+  no dithering is used, but the ``SUBTRACTIVE_DITHER_1`` and
+  ``SUBTRACTIVE_DITHER_2`` methods can be enabled by passing the correct
+  constants to the ``quantize_method`` argument to the ``CompImageHDU``
+  constructor.  A seed can be manually specified, or automatically generated
+  using either the system clock or checksum-based methods via the
+  ``dither_seed`` argument.  See the documentation for ``CompImageHDU`` for
+  more details. (#198) (spacetelescope/PYFITS#32)
+
+- Images compressed with the Tile Compression standard can now be larger than
+  4 GB through support of the Q format. (#159)
+
+- All HDUs now have a ``.ver`` ``.level`` attribute that returns the value of
+  the EXTVAL and EXTLEVEL keywords from that HDU's header, if the exist.  This
+  was added for consistency with the ``.name`` attribute which returns the
+  EXTNAME value from the header.
+
+- Then ``Column`` and ``ColDefs`` classes have new ``.dtype`` attributes
+  which give the Numpy dtype for the column data in the first case, and the
+  full Numpy compound dtype for each table row in the latter case.
+
+- There was an issue where new tables created defaulted the values in all
+  string columns to '0.0'.  Now string columns are filled with empty strings
+  by default--this seems a less surprising default, but it may cause
+  differences with tables created with older versions of PyFITS.
+
+- Improved round-tripping and preservation of manually assigned column
+  attributes (``TNULLn``, ``TSCALn``, etc.) in table HDU headers.
+  (astropy/astropy#996)
+
+
+Bug Fixes
+---------
+
+- Binary tables containing compressed images may, optionally, contain other
+  columns unrelated to the tile compression convention. Although this is an
+  uncommon use case, it is permitted by the standard. (#159)
+
+- Reworked some of the file I/O routines to allow simpler, more consistent
+  mapping between OS-level file modes ('rb', 'wb', 'ab', etc.) and the more
+  "PyFITS-specific" modes used by PyFITS like "readonly" and "update".
+  That is, if reading a FITS file from an open file object, it doesn't matter
+  as much what "mode" it was opened in so long as it has the right
+  capabilities (read/write/etc.)  Also works around bugs in the Python io
+  module in 2.6+ with regard to file modes. (spacetelescope/PyFITS#33)
+
+- Fixed an obscure issue that can occur on systems that don't have flush to
+  memory-mapped files implemented (namely GNU Hurd). (astropy/astropy#968)
+
+
+3.1.3 (2013-11-26)
+==================
+
+- Disallowed assigning NaN and Inf floating point values as header values,
+  since the FITS standard does not define a way to represent them in. Because
+  this is undefined, the previous behavior did not make sense and produced
+  invalid FITS files. (spacetelescope/PyFITS#11)
+
+- Added a workaround for a bug in 64-bit OSX that could cause truncation when
+  writing files greater than 2^32 bytes in size. (spacetelescope/PyFITS#28)
+
+- Fixed a long-standing issue where writing binary tables did not correctly
+  write the TFORMn keywords for variable-length array columns (they omitted
+  the max array length parameter of the format).  This was thought fixed in
+  v3.1.2, but it was only fixed there for compressed image HDUs and not for
+  binary tables in general.
+
+- Fixed an obscure issue that can occur on systems that don't have flush to
+  memory-mapped files implemented (namely GNU Hurd). (Backported from 3.2)
+
+
+3.0.12 (2013-11-26)
+===================
+
+- Disallowed assigning NaN and Inf floating point values as header values,
+  since the FITS standard does not define a way to represent them in. Because
+  this is undefined, the previous behavior did not make sense and produced
+  invalid FITS files. (Backported from 3.1.3)
+
+- Added a workaround for a bug in 64-bit OSX that could cause truncation when
+  writing files greater than 2^32 bytes in size. (Backported from 3.1.3)
+
+- Fixed a long-standing issue where writing binary tables did not correctly
+  write the TFORMn keywords for variable-length array columns (they omitted
+  the max array length parameter of the format).  This was thought fixed in
+  v3.1.2, but it was only fixed there for compressed image HDUs and not for
+  binary tables in general. (Backported from 3.1.3)
+
+- Fixed an obscure issue that can occur on systems that don't have flush to
+  memory-mapped files implemented (namely GNU Hurd). (Backported from 3.2)
+
+
+3.1.3 (unreleased)
+==================
+
+- Disallowed assigning NaN and Inf floating point values as header values,
+  since the FITS standard does not define a way to represent them in. Because
+  this is undefined, the previous behavior did not make sense and produced
+  invalid FITS files. (spacetelescope/PyFITS#11)
+
+
+3.0.12 (unreleased)
+===================
+
+- Disallowed assigning NaN and Inf floating point values as header values,
+  since the FITS standard does not define a way to represent them in. Because
+  this is undefined, the previous behavior did not make sense and produced
+  invalid FITS files. (Backported from 3.1.3)
+
+- Added a workaround for a bug in 64-bit OSX that could cause truncation when
+  writing files greater than 2^32 bytes in size. (Backported from 3.1.3)
+
+
+3.1.2 (2013-04-22)
+==================
+
+- When an error occurs opening a file in fitsdiff the exception message will
+  now at least mention which file had the error. (#168)
 
 - Fixed support for opening gzipped FITS files by filename in a writeable mode
   (PyFITS has supported writing to gzip files for some time now, but only
@@ -41,29 +594,119 @@ Astropy.
 
 - Fixed an (apparently long-standing) issue where writing compressed images
   did not correctly write the TFORMn keywords for variable-length array
-  columns (they ommitted the max array length parameter of the format). (#199)
+  columns (they omitted the max array length parameter of the format). (#199)
+
+- Slightly refactored how tables containing variable-length array columns are
+  handled to add two improvements: Fixes an issue where accessing the data
+  after a call to the ``pyfits.getdata`` convenience function caused an
+  exception, and allows the VLA data to be read from an existing mmap of the
+  FITS file. (#200)
 
 - Fixed a bug that could occur when opening a table containing
   multi-dimensional columns (i.e. via the TDIMn keyword) and then writing it
   out to a new file. (#201)
 
+- Added use of the console_scripts entry point to install the fitsdiff and
+  fitscheck scripts, which if nothing else provides better Windows support.
+  The generated scripts now override the ones explicitly defined in the
+  scripts/ directory (which were just trivial stubs to begin with). (#202)
+
+- Fixed a bug on Python 3 where attempting to open a non-existent file on
+  Python 3 caused a seemingly unrelated traceback. (#203)
+
 - Fixed a bug in fitsdiff that reported two header keywords containing NaN
   as value as different. (#204)
 
+- Fixed an issue in the tests that caused some tests to fail if pyfits is
+  installed with read-only permissions. (#208)
 
-3.0.11 (unreleased)
--------------------
+- Fixed a bug where instantiating a ``BinTableHDU`` from a numpy array
+  containing boolean fields converted all the values to ``False``. (#215)
 
-- Nothing changed yet.
+- Fixed an issue where passing an array of integers into the constructor of
+  ``Column()`` when the column type is floats of the same byte width caused the
+  column array to become garbled. (#218)
+
+- Fixed inconsistent behavior in creating CONTINUE cards from byte strings
+  versus Unicode strings in Python 2--CONTINUE cards can now be created
+  properly from Unicode strings (so long as they are convertible to ASCII).
+  (spacetelescope/PyFITS#1)
+
+- Fixed a couple cases where creating a new table using TDIMn in some of the
+  columns could caused a crash. (spacetelescope/PyFITS#3)
+
+- Fixed a bug in parsing HIERARCH keywords that do not have a space after
+  the first equals sign (before the value). (spacetelescope/PyFITS#5)
+
+- Prevented extra leading whitespace on HIERARCH keywords from being treated
+  as part of the keyword. (spacetelescope/PyFITS#6)
+
+- Fixed a bug where HIERARCH keywords containing lower-case letters was
+  mistakenly marked as invalid during header validation.
+  (spacetelescope/PyFITS#7)
+
+- Fixed an issue that was ancillary to (spacetelescope/PyFITS#7) where the
+  ``Header.index()`` method did not work correctly with HIERARCH keywords
+  containing lower-case letters.
+
+
+3.0.11 (2013-04-17)
+===================
+
+- Fixed support for opening gzipped FITS files by filename in a writeable mode
+  (PyFITS has supported writing to gzip files for some time now, but only
+  enabled it when GzipFile objects were passed to ``pyfits.open()`` due to
+  some legacy code preventing full gzip support. Backported from 3.1.2. (#195)
+
+- Added a more helpful error message in the case of malformatted FITS files
+  that contain non-float NULL values in an ASCII table but are missing the
+  required TNULLn keywords in the header. Backported from 3.1.2. (#197)
+
+- Fixed an (apparently long-standing) issue where writing compressed images did
+  not correctly write the TFORMn keywords for variable-length array columns
+  (they omitted the max array length parameter of the format). Backported from
+  3.1.2. (#199)
+
+- Slightly refactored how tables containing variable-length array columns are
+  handled to add two improvements: Fixes an issue where accessing the data
+  after a call to the ``pyfits.getdata`` convenience function caused an
+  exception, and allows the VLA data to be read from an existing mmap of the
+  FITS file. Backported from 3.1.2. (#200)
+
+- Fixed a bug that could occur when opening a table containing
+  multi-dimensional columns (i.e. via the TDIMn keyword) and then writing it
+  out to a new file. Backported from 3.1.2. (#201)
+
+- Fixed a bug on Python 3 where attempting to open a non-existent file on
+  Python 3 caused a seemingly unrelated traceback. Backported from 3.1.2.
+  (#203)
+
+- Fixed a bug in fitsdiff that reported two header keywords containing NaN
+  as value as different. Backported from 3.1.2. (#204)
+
+- Fixed an issue in the tests that caused some tests to fail if pyfits is
+  installed with read-only permissions. Backported from 3.1.2. (#208)
+
+- Fixed a bug where instantiating a ``BinTableHDU`` from a numpy array
+  containing boolean fields converted all the values to ``False``. Backported
+  from 3.1.2. (#215)
+
+- Fixed an issue where passing an array of integers into the constructor of
+  ``Column()`` when the column type is floats of the same byte width caused the
+  column array to become garbled. Backported from 3.1.2. (#218)
+
+- Fixed a couple cases where creating a new table using TDIMn in some of the
+  columns could caused a crash. Backported from 3.1.2.
+  (spacetelescope/PyFITS#3)
 
 
 3.1.1 (2013-01-02)
-------------------
+==================
 
 This is a bug fix release for the 3.1.x series.
 
 Bug Fixes
-^^^^^^^^^
+---------
 
 - Improved handling of scaled images and pseudo-unsigned integer images in
   compressed image HDUs.  They now work more transparently like normal image
@@ -105,7 +748,7 @@ Bug Fixes
 - Fixed a crash when generating diff reports from diffs using the
   ``ignore_comments`` options. (#181)
 
-- Fixed some bugs with WCS Paper IV record-valued keyword cards:
+- Fixed some bugs with FITS WCS distortion paper record-valued keyword cards:
 
   - Cards that looked kind of like RVKCs but were not intended to be were
     over-permissively treated as such--commentary keywords like COMMENT and
@@ -140,12 +783,7 @@ Bug Fixes
 
 
 3.0.10 (2013-01-02)
--------------------
-
-This is a bug fix release for the 3.0.x series.
-
-Bug Fixes
-^^^^^^^^^
+===================
 
 - Improved handling of scaled images and pseudo-unsigned integer images in
   compressed image HDUs.  They now work more transparently like normal image
@@ -169,6 +807,10 @@ Bug Fixes
   PyFITS will not automatically use compatible tile sizes even if they're not
   explicitly specified.  Backported from 3.1.1. (#171)
 
+- Fixed a bug when writing out files containing zero-width table columns,
+  where the TFIELDS keyword would be updated incorrectly, leaving the table
+  largely unreadable.  Backported from 3.1.0. (#174)
+
 - Fixed an issue where opening files containing random groups HDUs in update
   mode could cause an unnecessary rewrite of the file even if none of the
   data is modified.  Backported from 3.1.1. (#179)
@@ -178,10 +820,10 @@ Bug Fixes
 
 
 3.1 (2012-08-08)
-----------------
+================
 
 Highlights
-^^^^^^^^^^
+----------
 
 - The ``Header`` object has been significantly reworked, and ``CardList``
   objects are now deprecated (their functionality folded into the ``Header``
@@ -195,7 +837,7 @@ Highlights
   Features below.
 
 API Changes
-^^^^^^^^^^^
+-----------
 
 - The ``Header`` class has been rewritten, and the ``CardList`` class is
   deprecated.  Most of the basic details of working with FITS headers are
@@ -203,11 +845,11 @@ API Changes
   in some areas that will be of interest to advanced users, and to application
   developers.  For full details of the changes, see the "Header Interface
   Transition Guide" section in the PyFITS documentation.  See ticket #64 on
-  the PyFITS Trac for futher details and background. Some highlights are
+  the PyFITS Trac for further details and background. Some highlights are
   listed below:
 
   * The Header class now fully implements the Python dict interface, and can
-    be used interchangably with a dict, where the keys are header keywords.
+    be used interchangeably with a dict, where the keys are header keywords.
 
   * New keywords can be added to the header using normal keyword assignment
     (previously it was necessary to use ``Header.update`` to add new
@@ -286,7 +928,7 @@ API Changes
 - A new global variable ``pyfits.EXTENSION_NAME_CASE_SENSITIVE`` was added.
   This serves as a replacement for ``pyfits.setExtensionNameCaseSensitive``
   which is not deprecated and may be removed in a future version.  To enable
-  case-sensitivity of extension names (i.e. treat 'sci' as distict from 'SCI')
+  case-sensitivity of extension names (i.e. treat 'sci' as distinct from 'SCI')
   set ``pyfits.EXTENSION_NAME_CASE_SENSITIVE = True``.  The default is
   ``False``. (r1139)
 
@@ -310,16 +952,15 @@ API Changes
   and removed when the file is saved.
 
 New Features
-^^^^^^^^^^^^
+------------
 
-- Added support for the proposed "FITS" extension HDU type.  See
-  http://listmgr.cv.nrao.edu/pipermail/fitsbits/2002-April/001094.html.  FITS
-  HDUs contain an entire FITS file embedded in their data section.  `FitsHDU`
+- Added support for the proposed "FITS" extension HDU type. FITS
+  HDUs contain an entire FITS file embedded in their data section.  ``FitsHDU``
   objects work like other HDU types in PyFITS.  Their ``.data`` attribute
   returns the raw data array.  However, they have a special ``.hdulist``
   attribute which processes the data as a FITS file and returns it as an
   in-memory HDUList object.  FitsHDU objects also support a
-  ``FitsHDU.fromhdulist()`` classmethod which returns a new `FitsHDU` object
+  ``FitsHDU.fromhdulist()`` classmethod which returns a new ``FitsHDU`` object
   that embeds the supplied HDUList. (#80)
 
 - Added a new ``.is_image`` attribute on HDU objects, which is True if the HDU
@@ -358,7 +999,7 @@ New Features
   (#121)
 
 Changes in Behavior
-^^^^^^^^^^^^^^^^^^^
+-------------------
 
 - Warnings from PyFITS are not output to stderr by default, instead of stdout
   as it has been for some time.  This is contrary to most users' expectations
@@ -366,7 +1007,7 @@ Changes in Behavior
   desired output for their scripts. (r1319)
 
 Bug Fixes
-^^^^^^^^^
+---------
 
 - Fixed ``pyfits.tcreate()`` (now ``pyfits.tableload()``) to be more robust
   when encountering blank lines in a column definition file (#14)
@@ -380,7 +1021,7 @@ Bug Fixes
   This allowed for the implementation of ``HDUList.fromstring`` described
   above. (#90)
 
-- Fixed a rare corner case where, in some use cases, (mildly, recoverably)
+- Fixed a rare corner case where, in some use cases, (mildly, recoverable)
   malformatted float values in headers were not properly returned as floats.
   (#137)
 
@@ -404,12 +1045,12 @@ Bug Fixes
 
 
 3.0.9 (2012-08-06)
-------------------
+==================
 
 This is a bug fix release for the 3.0.x series.
 
 Bug Fixes
-^^^^^^^^^
+---------
 
 - Fixed ``Header.values()``/``Header.itervalues()`` and ``Header.items()``/
   ``Header.iteritems()`` to correctly return the different values for
@@ -428,7 +1069,7 @@ Bug Fixes
 
 - Fixed a bug where opening a file containing compressed image HDUs in
   'update' mode and then immediately closing it without making any changes
-  caused the file to be rewritten unncessarily. (#167)
+  caused the file to be rewritten unnecessarily. (#167)
 
 - Fixed two memory leaks that could occur when writing compressed image data,
   or in some cases when opening files containing compressed image HDUs in
@@ -436,10 +1077,10 @@ Bug Fixes
 
 
 3.0.8 (2012-06-04)
----------------------
+==================
 
 Changes in Behavior
-^^^^^^^^^^^^^^^^^^^
+-------------------
 
 - Prior to this release, image data sections did not work with scaled
   data--that is, images with non-trivial BSCALE and/or BZERO values.
@@ -449,7 +1090,7 @@ Changes in Behavior
   extends that support for general BSCALE+BZERO values.
 
 Bug Fixes
-^^^^^^^^^
+---------
 
 - Fixed a bug that prevented updates to values in boolean table columns from
   being saved.  This turned out to be a symptom of a deeper problem that could
@@ -459,7 +1100,7 @@ Bug Fixes
   could, in some circumstances, cause headers (and the rest of the file after
   that point) to be misread. (#142)
 
-- Fixed support for scaled image data and psuedo-unsigned ints in image data
+- Fixed support for scaled image data and pseudo-unsigned ints in image data
   sections (``hdu.section``).  Previously this was not supported at all.  At
   some point support was supposedly added, but it was buggy and incomplete.
   Now the feature seems to work much better. (#143)
@@ -490,16 +1131,16 @@ Bug Fixes
 
 
 3.0.7 (2012-04-10)
-----------------------
+==================
 
 Changes in Behavior
-^^^^^^^^^^^^^^^^^^^
+-------------------
 
 - Slices of GroupData objects now return new GroupData objects instead of
   extended multi-row _Group objects. This is analogous to how PyFITS 3.0 fixed
   FITS_rec slicing, and should have been fixed for GroupData at the same time.
   The old behavior caused bugs where functions internal to Numpy expected that
-  slicing an ndarray would return a new ndarray.  As this is a rare usecase
+  slicing an ndarray would return a new ndarray.  As this is a rare use case
   with a rare feature most users are unlikely to be affected by this change.
 
 - The previously internal _Group object for representing individual group
@@ -512,7 +1153,7 @@ Changes in Behavior
   HDUs.  It was unnecessary to modify this value.
 
 Bug Fixes
-^^^^^^^^^
+---------
 
 - Fixed GroupData objects to return new GroupData objects when sliced instead
   of _Group record objects.  See "Changes in behavior" above for more details.
@@ -520,7 +1161,7 @@ Bug Fixes
 - Fixed slicing of Group objects--previously it was not possible to slice
   slice them at all.
 
-- Made it possible to assign `np.bool_` objects as header values. (#123)
+- Made it possible to assign ``np.bool_`` objects as header values. (#123)
 
 - Fixed overly strict handling of the EXTEND keyword; see "Changes in
   behavior" above. (#124)
@@ -532,9 +1173,9 @@ Bug Fixes
 - Fixed a bug where the values of the PTYPEn keywords in a random groups HDU
   were forced to be all lower-case when saving the file. (#130)
 
-- Removed an unnecessary inline import in `ExtensionHDU.__setattr__` that was
+- Removed an unnecessary inline import in ``ExtensionHDU.__setattr__`` that was
   causing some slowdown when opening files containing a large number of
-  extensions, plus a few other small (but not insignficant) performance
+  extensions, plus a few other small (but not insignificant) performance
   improvements thanks to Julian Taylor. (#133)
 
 - Fixed a regression where header blocks containing invalid end-of-header
@@ -547,10 +1188,10 @@ Bug Fixes
 
 
 3.0.6 (2012-02-29)
-------------------
+==================
 
 Highlights
-^^^^^^^^^^
+----------
 
 The main reason for this release is to fix an issue that was introduced in
 PyFITS 3.0.5 where merely opening a file containing scaled data (that is, with
@@ -566,7 +1207,7 @@ This release also fixes a few Windows-specific bugs found through more
 extensive Windows testing, and other miscellaneous bugs.
 
 Bug Fixes
-^^^^^^^^^
+---------
 
 - More accurate error messages when opening files containing invalid header
   cards. (#109)
@@ -596,7 +1237,7 @@ Bug Fixes
 
 
 3.0.5 (2012-01-30)
-------------------
+==================
 
 - Fixed a crash that could occur when accessing image sections of files
   opened with memmap=True. (r1211)
@@ -629,14 +1270,14 @@ Bug Fixes
 - Fixed a crash that could occur in Python 3 when opening files with checksum
   checking enabled. (r1336)
 
-- Fixed a small bug that could cause a crash in the `StreamingHDU` interface
+- Fixed a small bug that could cause a crash in the ``StreamingHDU`` interface
   when using Numpy below version 1.5.
 
-- Fixed a crash that could occur when creating a new `CompImageHDU` from an
+- Fixed a crash that could occur when creating a new ``CompImageHDU`` from an
   array of big-endian data. (#104)
 
 - Fixed a crash when opening a file with extra zero padding at the end.
-  Though FITS files should not have such padding, it's not explictly forbidden
+  Though FITS files should not have such padding, it's not explicitly forbidden
   by the format either, and PyFITS shouldn't stumble over it. (#106)
 
 - Fixed a major slowdown in opening tables containing large columns of string
@@ -644,7 +1285,7 @@ Bug Fixes
 
 
 3.0.4 (2011-11-22)
-------------------
+==================
 
 - Fixed a crash when writing HCOMPRESS compressed images that could happen on
   Python 2.5 and 2.6. (r1217)
@@ -688,7 +1329,7 @@ Bug Fixes
 
 
 3.0.3 (2011-10-05)
-------------------
+==================
 
 - Fixed several small bugs involving corner cases in record-valued keyword
   cards (#70)
@@ -706,7 +1347,7 @@ Bug Fixes
 
 
 3.0.2 (2011-09-23)
-------------------
+==================
 
 - The ``BinTableHDU.tcreate`` method and by extension the ``pyfits.tcreate``
   function don't get tripped up by blank lines anymore (#14)
@@ -735,7 +1376,7 @@ Bug Fixes
   original file permissions (#79)
 
 - Fixed the handling of TDIMn keywords; 3.0 added support for them, but got
-  the axis order backards (they were treated as though they were row-major)
+  the axis order backwards (they were treated as though they were row-major)
   (#82)
 
 - Fixed a crash when a FITS file containing scaled data is opened and
@@ -747,7 +1388,7 @@ Bug Fixes
 
 
 3.0.1 (2011-09-12)
-------------------
+==================
 
 - Fixed a bug where updating a header card comment could cause the value to be
   lost if it had not already been read from the card image string.
@@ -765,7 +1406,7 @@ Bug Fixes
 - Fixed a bug where writing a table with zero rows could fail in some cases
   (#72)
 
-- Miscellanous small bug fixes that were causing some tests to fail,
+- Miscellaneous small bug fixes that were causing some tests to fail,
   particularly on Python 3 (#74, #75)
 
 - Fixed a bug where creating a table column from an array in non-native byte
@@ -774,7 +1415,7 @@ Bug Fixes
 
 
 3.0.0 (2011-08-23)
---------------------
+====================
 
 - Contains major changes, bumping the version to 3.0
 
@@ -827,7 +1468,7 @@ Bug Fixes
 
 - Calls to deprecated functions will display a Deprecation warning.  However,
   in Python 2.7 and up Deprecation warnings are ignored by default, so run
-  Python with the `-Wd` option to see if you're using any deprecated
+  Python with the ``-Wd`` option to see if you're using any deprecated
   functions.  If we get close to actually removing any functions, we might
   make the Deprecation warnings display by default.
 
@@ -880,12 +1521,12 @@ Bug Fixes
 
 
 2.4.0 (2011-01-10)
---------------------
+====================
 The following enhancements were added:
 
 - Checksum support now correctly conforms to the FITS standard.  pyfits
   supports reading and writing both the old checksums and new
-  standard-compliant checksums.  The `fitscheck` command-line utility is
+  standard-compliant checksums.  The ``fitscheck`` command-line utility is
   provided to verify and update checksums.
 
 - Added a new optional keyword argument ``do_not_scale_image_data``
@@ -956,7 +1597,7 @@ The following bugs were fixed:
 
 
 2.3.1 (2010-06-03)
---------------------
+====================
 
 The following bugs were fixed:
 
@@ -966,13 +1607,13 @@ The following bugs were fixed:
 
 
 2.3 (2010-05-11)
-------------------
+==================
 
 The following enhancements were made:
 
 - Completely eliminate support for numarray.
 
-- Rework pyfits documention to use Sphinx.
+- Rework pyfits documentation to use Sphinx.
 
 - Support python 2.6 and future division.
 
@@ -1005,7 +1646,7 @@ The following enhancements were made:
   64 data is written to a file, the data will be reverse scaled into a signed
   integer 16, 32, or 64 array and written out to the file along with the
   appropriate BSCALE/BZERO header cards.  Note that for backward
-  compatability, the 'uint16' keyword argument will still be accepted in the
+  compatibility, the 'uint16' keyword argument will still be accepted in the
   open function when handling unsigned integer 16 conversion.
 
 - Provided the capability to access the data for a column of a fits table by
@@ -1021,7 +1662,7 @@ The following enhancements were made:
     >>> print table.field('c2') # this is the data for column 2
     ['abc' 'xy']
     >>> print table['c2'] # this is also the data for column 2
-    array(['abc', 'xy '], dtype='\|S3')
+    array(['abc', 'xy '], dtype='|S3')
     >>> print table[1] # this is the data for row 1
     (2, 'xy', 6.6999997138977054, True)
 
@@ -1308,13 +1949,13 @@ The following bugs were fixed:
   variable length format column from character data (PA format).
 
 - Modified installation code so that when installing on Windows, when a C++
-  compiler compatable with the Python binary is not found, the installation
+  compiler compatible with the Python binary is not found, the installation
   completes with a warning that all optional extension modules failed to
   build.  Previously, an Error was issued and the installation stopped.
 
 
 2.2.2 (2009-10-12)
---------------------
+====================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -1327,7 +1968,7 @@ The following bugs were fixed:
 
 
 2.2.1 (2009-10-06)
---------------------
+====================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -1343,7 +1984,7 @@ The following bugs were fixed:
 
 
 2.2 (2009-09-23)
-------------------
+==================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -1369,7 +2010,7 @@ The following enhancements were made:
 
     >>> hdul.insert(2,hdu)
 
-- Provided the capability to handle unicode input for file names.
+- Provided the capability to handle Unicode input for file names.
 
 - Provided support for integer division required by Python 3.0.
 
@@ -1417,7 +2058,7 @@ The following bugs were fixed:
 
 
 2.1.1 (2009-04-22)
--------------------
+===================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -1434,7 +2075,7 @@ The following bugs were fixed:
 
 
 2.1 (2009-04-14)
-------------------
+==================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -1524,7 +2165,7 @@ The following bugs were fixed:
 
 
 2.0.1 (2009-02-03)
---------------------
+====================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -1536,7 +2177,7 @@ The following bugs were fixed:
 
 
 2.0 (2009-01-30)
-------------------
+==================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -1693,11 +2334,11 @@ The following bugs were fixed:
   an ImageHDU header with a PCOUNT card that is missing or has a value other
   than 0.
 
-.. _[1]: http://fits.gsfc.nasa.gov/registry/tilecompression.html
+.. _[1]: https://fits.gsfc.nasa.gov/registry/tilecompression.html
 
 
 1.4.1 (2008-11-04)
---------------------
+====================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -1716,7 +2357,7 @@ The following bugs were fixed:
 
 
 1.4 (2008-07-07)
-------------------
+==================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -1742,7 +2383,7 @@ The following enhancements were made:
     an underlying file object on which the function will be performed.
 
 - Added support for record-valued keyword cards as introduced in the "FITS WCS
-  Paper IV proposal for representing a more general distortion model".
+  proposal for representing a more general distortion model".
 
   - Record-valued keyword cards are string-valued cards where the string is
     interpreted as a definition giving a record field name, and its floating
@@ -1754,7 +2395,7 @@ The following enhancements were made:
     the standard FITS ASCII representation of a floating point number, and
     these are separated by a colon followed by a single blank.
 
-    The grammer for field-specifier is::
+    The grammar for field-specifier is::
 
       field-specifier:
           field
@@ -1907,7 +2548,7 @@ The following enhancements were made:
       DP1     = 'AUX.1.COEFF.1: 0.000488'
       DP1     = 'AUX.2.COEFF.2: 0.00097656'
 
-  - The CardList keys() method will allow the retrivial of all of the key
+  - The CardList keys() method will allow the retrieval of all of the key
     values in the CardList.  For example:
 
       >>> cl=hdr['DP1.AXIS.*']
@@ -1917,7 +2558,7 @@ The following enhancements were made:
       >>> cl.keys()
       ['DP1.AXIS.1', 'DP1.AXIS.2']
 
-  - The CardList values() method will allow the retrivial of all of the values
+  - The CardList values() method will allow the retrieval of all of the values
     in the CardList.  For example:
 
       >>> cl=hdr['DP1.AXIS.*']
@@ -1959,13 +2600,7 @@ The following enhancements were made:
       >>> del cl[0]
       >>> print cl['DP1.AXIS.1']
       Traceback (most recent call last):
-      File "<stdin>", line 1, in <module>
-      File "NP_pyfits.py", line 977, in __getitem__
-        return self.ascard[key].value
-      File "NP_pyfits.py", line 1258, in __getitem__
-        _key = self.index_of(key)
-      File "NP_pyfits.py", line 1403, in index_of
-        raise KeyError, 'Keyword %s not found.' % `key`
+      ...
       KeyError: "Keyword 'DP1.AXIS.1' not found."
       >>> hdr['DP1.AXIS.1']
       4.0
@@ -2028,19 +2663,19 @@ The following enhancements were made:
     the appropriate card object given an input string.  These two methods are
     also available as convenience functions:
 
-      >>> c1 = pyfits.RecordValuedKeywordCard.createCard('DP1','AUX: 1','comment)
+      >>> c1 = pyfits.RecordValuedKeywordCard.createCard('DP1','AUX: 1','comment')
 
     or
 
-      >>> c1 = pyfits.createCard('DP1','AUX: 1','comment)
+      >>> c1 = pyfits.createCard('DP1','AUX: 1','comment')
       >>> print type(c1)
       <'pyfits.NP_pyfits.RecordValuedKeywordCard'>
 
-      >>> c1 = pyfits.RecordValuedKeywordCard.createCard('DP1','AUX 1','comment)
+      >>> c1 = pyfits.RecordValuedKeywordCard.createCard('DP1','AUX 1','comment')
 
     or
 
-      >>> c1 = pyfits.createCard('DP1','AUX 1','comment)
+      >>> c1 = pyfits.createCard('DP1','AUX 1','comment')
       >>> print type(c1)
       <'pyfits.NP_pyfits.Card'>
 
@@ -2095,7 +2730,7 @@ The following bugs were fixed:
 
 
 1.3 (2008-02-22)
-------------------
+==================
 
 Updates described in this release are only supported in the NUMPY version of
 pyfits.
@@ -2112,7 +2747,7 @@ The following enhancements were made:
     stpyfits.
 
 - Added a new feature to allow trailing HDUs to be deleted from a fits file
-  without actually reading the data from the file. 
+  without actually reading the data from the file.
 
   - This supports a JWST requirement to delete a trailing HDU from a file
     whose primary Image HDU is too large to be read on a 32 bit machine.
@@ -2188,11 +2823,11 @@ The following bugs were fixed:
   windows platform using a drive letter in the file specification caused a
   misleading IOError exception to be raised.
 
-.. _[2]: http://stsdas.stsci.edu/pytools/stpyfits
+.. _[2]: https://stscitools.readthedocs.io/en/latest/stpyfits.html
 
 
 1.1 (2007-06-15)
-------------------
+==================
 
 - Modified to use either NUMPY or NUMARRAY.
 
@@ -2211,7 +2846,7 @@ The following bugs were fixed:
 
 
 1.0.1 (2006-03-24)
---------------------
+====================
 
 The changes to PyFITS were primarily to improve the docstrings and to
 reclassify some public functions and variables as private. Readgeis and
@@ -2228,11 +2863,11 @@ stsci_python release.
 
 
 1.0 (2005-11-01)
-------------------
+==================
 
 Major Changes since v0.9.6:
 
-- Added support for the HEIRARCH convention
+- Added support for the HIERARCH convention
 
 - Added support for iteration and slicing for HDU lists
 
@@ -2261,10 +2896,10 @@ Minor changes since v0.9.6:
 
 - Add output verification in methods flush() and close().
 
-- Modify the the design of the open() function to remove the output_verify
+- Modify the design of the open() function to remove the output_verify
   argument.
 
-- Remove the groups argument in GroupsHDU's contructor.
+- Remove the groups argument in GroupsHDU's constructor.
 
 - Redesign the column definition class to make its column components more
   accessible.  Also to make it conducive for higher level functionalities,
@@ -2285,7 +2920,7 @@ PyFITS Version 1.0 REQUIRES Python 2.3 or later.
 
 
 0.9.6 (2004-11-11)
---------------------
+====================
 
 Major changes since v0.9.3:
 
@@ -2306,11 +2941,11 @@ Some minor changes:
 
 
 0.9.3 (2004-07-02)
---------------------
+====================
 
 Changes since v0.9.0:
 
-- Lazy instanciation of full Headers/Cards for all HDU's when the file is
+- Lazy instantiation of full Headers/Cards for all HDU's when the file is
   opened.  At the open, only extracts vital info (e.g. NAXIS's) from the
   header parts.  This change will speed up the performance if the user only
   needs to access one extension in a multi-extension FITS file.
@@ -2319,14 +2954,14 @@ Changes since v0.9.0:
   binary table.  At the user interface, they are converted to Boolean arrays
   for easy manipulation.  For example, if the column's TFORM is "11X",
   internally the data is stored in 2 bytes, but the user will see, at each row
-  of this column, a Boolean array of 11 elements. 
+  of this column, a Boolean array of 11 elements.
 
 - Fix a bug such that when a table extension has no data, it will not try to
   scale the data when updating/writing the HDU list.
 
 
 0.9 (2004-04-27)
-------------------
+==================
 
 Changes since v0.8.0:
 
@@ -2350,7 +2985,7 @@ Changes since v0.8.0:
 
 
 0.8.0 (2003-08-19)
---------------------
+====================
 
 **NOTE:** This version will only work with numarray Version 0.6.  In addition,
 earlier versions of PyFITS will not work with numarray 0.6.  Therefore, both
@@ -2366,7 +3001,7 @@ Changes since 0.7.6:
 - Support of complex columns
 
 - Modify the __getitem__ method in FITS_rec.  In order to make sure the scaled
-  quantities are also viewing ths same data as the original FITS_rec, all
+  quantities are also viewing the same data as the original FITS_rec, all
   fields need to be "touched" when __getitem__ is called.
 
 - Add a new attribute mmobject for HDUList, and close the memmap object when
@@ -2383,7 +3018,6 @@ Changes since 0.7.6:
 
 
 0.7.6 (2002-11-22)
-------------------
 
 **NOTE:** This version will only work with numarray Version 0.4.
 
@@ -2411,40 +3045,40 @@ Changes since 0.7.5:
 - Change some internal variables to make their appearance more consistent:
 
     old name                new name
-        
+
     __octalRegex            _octalRegex
     __readblock()           _readblock()
     __formatter()           _formatter().
     __value_RE              _value_RE
-    __numr                  _numr 
-    __comment_RE            _comment_RE 
-    __keywd_RE              _keywd_RE 
+    __numr                  _numr
+    __comment_RE            _comment_RE
+    __keywd_RE              _keywd_RE
     __number_RE             _number_RE.
     tmpName()               _tmpName()
     dimShape                _dimShape
     ErrList                 _ErrList
-   
-- Move up the module description.  Move the copywright statement to the bottom
+
+- Move up the module description.  Move the copyright statement to the bottom
   and assign to the variable __credits__.
 
 - change the following line:
 
     self.__dict__ = input.__dict__
 
-  to 
+  to
 
     self.__setstate__(input.__getstate__())
 
   in order for pyfits to run under numarray 0.4.
 
 - edit _readblock to add the (optional) firstblock argument and raise IOError
-  if the the first 8 characters in the first block is not 'SIMPLE  ' or
+  if the first 8 characters in the first block is not 'SIMPLE  ' or
   'XTENSION'.  Edit the function open to check for IOError to skip the last
   null filled block(s).  Edit readHDU to add the firstblock argument.
 
 
 0.7.5 (2002-08-16)
---------------------
+====================
 
 Changes since v0.7.3:
 
@@ -2469,7 +3103,7 @@ Changes since v0.7.3:
 
 
 0.7.3 (2002-07-12)
---------------------
+====================
 
 Changes since v0.7.2:
 
@@ -2501,83 +3135,83 @@ Changes since v0.7.2:
   the comment must be string type to avoid exception.
 
 0.7.2.1 (2002-06-25)
-----------------------
+======================
 
-A couple of bugs were addressed in this version. 
+A couple of bugs were addressed in this version.
 
 - Fix a bug in _add_commentary(). Due to a change in index_of() during version
   0.6.5.5, _add_commentary needs to be modified to avoid exception if the key
   is not present in the header already. This affects (fixes) add_history(),
-  add_comment(), and add_blank(). 
+  add_comment(), and add_blank().
 
 - Fix a bug in __getattr__() in Card class. The change made in 0.7.2 to rstrip
   the comment must be string type to avoid exception.
 
 
 0.7.2 (2002-06-19)
---------------------
+====================
 
-The two major improvements from Version 0.6.2 are: 
+The two major improvements from Version 0.6.2 are:
 
 - support reading tables  with "scaled" columns (e.g.  tscal/tzero, Boolean,
   and ASCII tables)
 
 - a prototype output verification.
 
-This version of PyFITS requires numarray version 0.3.4. 
+This version of PyFITS requires numarray version 0.3.4.
 
-Other changes include: 
+Other changes include:
 
 - Implement the new HDU hierarchy proposed earlier this year.  This in turn
-  reduces some of the redundant methods common to several HDU classes. 
- 
+  reduces some of the redundant methods common to several HDU classes.
+
 - Add 3 new methods to the Header class: add_history, add_comment, and
   add_blank.
 
 - The table attributes _columns are now .columns and the attributes in ColDefs
   are now all without the underscores.  So, a user can get a list of column
-  names by: hdu.columns.names. 
+  names by: hdu.columns.names.
 
 - The "fill" argument in the new_table method now has a new meaning:<br> If
   set to true (=1), it will fill the entire new table with zeros/blanks.
   Otherwise (=0), just the extra rows/cells are filled with zeros/blanks.
-  Fill values other than zero/blank are now not possible. 
+  Fill values other than zero/blank are now not possible.
 
 - Add the argument output_verify to the open method and writeto method.  Not
-  in the flush or close methods yet, due to possible complication. 
+  in the flush or close methods yet, due to possible complication.
 
 - A new copy method for tables, the copy is totally independent from the table
-  it copies from. 
+  it copies from.
 
 - The tostring() call in writeHDUdata takes up extra space to store the string
-  object.  Use tofile() instead, to save space. 
+  object.  Use tofile() instead, to save space.
 
 - Make changes from _byteswap to _byteorder, following corresponding changes
-  in numarray and recarray. 
+  in numarray and recarray.
 
-- Insert(update) EXTEND in PrimaryHDU only when header is None. 
+- Insert(update) EXTEND in PrimaryHDU only when header is None.
 
-- Strip the trailing blanks for the comment value of a card. 
+- Strip the trailing blanks for the comment value of a card.
 
 - Add seek(0) right after the __buildin__.open(0), because for the 'ab+' mode,
   the pointer is at the end after open in Linux, but it is at the beginning in
-  Solaris. 
+  Solaris.
 
 - Add checking of data against header, update header keywords (NAXIS's,
-  BITPIX) when they don't agree with the data. 
+  BITPIX) when they don't agree with the data.
 
-- change version to __version__. 
+- change version to __version__.
 
 There are also many other minor internal bug fixes and
-technical changes. 
+technical changes.
 
 
 0.6.2 (2002-02-12)
---------------------
+====================
 
-This version requires numarray version 0.2. 
+This version requires numarray version 0.2.
 
-Things not yet supported but are part of future development: 
+Things not yet supported but are part of future development:
 
 - Verification and/or correction of FITS objects being written to disk so that
   they are legal FITS. This is being added now and should be available in
@@ -2604,4 +3238,4 @@ Things not yet supported but are part of future development:
 - Support for tables with TNULL values. This awaits an enhancement to numarray
   to support mask arrays (planned).  (At least a couple of months off).
 
-.. _PyFITS: http://www.stsci.edu/resources/software_hardware/pyfits
+.. _PyFITS: https://github.com/spacetelescope/pyfits

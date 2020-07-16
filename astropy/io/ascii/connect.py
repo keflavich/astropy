@@ -2,131 +2,53 @@
 # This file connects the readers/writers to the astropy.table.Table class
 
 
+import re
 
-from .. import registry as io_registry
-from ...table import Table
+from astropy.io import registry as io_registry  # noqa
+from astropy.table import Table
 
 __all__ = []
 
 
-# Generic
-# =======
-
-
-def read_asciitable(filename, **kwargs):
+def io_read(format, filename, **kwargs):
     from .ui import read
+    if format != 'ascii':
+        format = re.sub(r'^ascii\.', '', format)
+        kwargs['format'] = format
     return read(filename, **kwargs)
 
-io_registry.register_reader('ascii', Table, read_asciitable)
 
-
-def write_asciitable(table, filename, **kwargs):
+def io_write(format, table, filename, **kwargs):
     from .ui import write
+    if format != 'ascii':
+        format = re.sub(r'^ascii\.', '', format)
+        kwargs['format'] = format
     return write(table, filename, **kwargs)
 
-io_registry.register_writer('ascii', Table, write_asciitable)
+
+def io_identify(suffix, origin, filepath, fileobj, *args, **kwargs):
+    return filepath is not None and filepath.endswith(suffix)
 
 
-# IPAC
-# ====
+def _get_connectors_table():
+    from .core import FORMAT_CLASSES
 
-def read_ipac(filename, **kwargs):
-    from .ipac import Ipac
-    from .ui import read
-    if 'guess' not in kwargs:
-        kwargs['guess'] = False
-    return read(filename, Reader=Ipac, **kwargs)
+    rows = []
+    rows.append(('ascii', '', 'Yes', 'ASCII table in any supported format (uses guessing)'))
+    for format in sorted(FORMAT_CLASSES):
+        cls = FORMAT_CLASSES[format]
 
-io_registry.register_reader('ipac', Table, read_ipac)
+        io_format = 'ascii.' + cls._format_name
+        description = getattr(cls, '_description', '')
+        class_link = f':class:`~{cls.__module__}.{cls.__name__}`'
+        suffix = getattr(cls, '_io_registry_suffix', '')
+        can_write = 'Yes' if getattr(cls, '_io_registry_can_write', True) else ''
 
+        rows.append((io_format, suffix, can_write,
+                     f'{class_link}: {description}'))
+    out = Table(list(zip(*rows)), names=('Format', 'Suffix', 'Write', 'Description'))
+    for colname in ('Format', 'Description'):
+        width = max(len(x) for x in out[colname])
+        out[colname].format = f'%-{width}s'
 
-# CDS
-# ===
-
-
-def read_cds(filename, **kwargs):
-    from .cds import Cds
-    from .ui import read
-    if 'guess' not in kwargs:
-        kwargs['guess'] = False
-    return read(filename, Reader=Cds, **kwargs)
-
-io_registry.register_reader('cds', Table, read_cds)
-
-
-# DAOPhot
-# =======
-
-def read_daophot(filename, **kwargs):
-    from .daophot import Daophot
-    from .ui import read
-    if 'guess' not in kwargs:
-        kwargs['guess'] = False
-    return read(filename, Reader=Daophot, **kwargs)
-
-io_registry.register_reader('daophot', Table, read_daophot)
-
-# SExtractor
-# =======
-
-def read_sextractor(filename, **kwargs):
-    from .sextractor import SExtractor
-    from .ui import read
-    if 'guess' not in kwargs:
-        kwargs['guess'] = False
-    return read(filename, Reader=SExtractor, **kwargs)
-
-io_registry.register_reader('sextractor', Table, read_sextractor)
-
-# LaTeX
-# =====
-
-def read_latex(filename, **kwargs):
-    from .latex import Latex
-    from .ui import read
-    if 'guess' not in kwargs:
-        kwargs['guess'] = False
-    return read(filename, Reader=Latex, **kwargs)
-
-io_registry.register_reader('latex', Table, read_latex)
-
-
-def write_latex(table, filename, **kwargs):
-    from .latex import Latex
-    from .ui import write
-    write(table, filename, Writer=Latex, **kwargs)
-
-io_registry.register_writer('latex', Table, write_latex)
-
-
-def is_latex(origin, args, kwargs):
-    return isinstance(args[0], basestring) and args[0].endswith('.tex')
-
-io_registry.register_identifier('latex', Table, is_latex)
-
-
-# RDB
-# ===
-
-def read_rdb(filename, **kwargs):
-    from .basic import Rdb
-    from .ui import read
-    if 'guess' not in kwargs:
-        kwargs['guess'] = False
-    return read(filename, Reader=Rdb, **kwargs)
-
-io_registry.register_reader('rdb', Table, read_rdb)
-
-
-def write_rdb(table, filename, **kwargs):
-    from .basic import Rdb
-    from .ui import write
-    write(table, filename, Writer=Rdb, **kwargs)
-
-io_registry.register_writer('rdb', Table, write_rdb)
-
-
-def is_rdb(origin, args, kwargs):
-    return isinstance(args[0], basestring) and args[0].endswith('.rdb')
-
-io_registry.register_identifier('rdb', Table, is_rdb)
+    return out

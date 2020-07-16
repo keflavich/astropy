@@ -4,210 +4,195 @@
 This module contains the classes and utility functions for distance and
 cartesian coordinates.
 """
-from abc import ABCMeta, abstractproperty, abstractmethod
+
+import warnings
 
 import numpy as np
 
-from .angles import RA, Dec, Angle, AngularSeparation
-from .. import units as u
-from .. import cosmology
+from astropy import units as u
+from astropy.utils.exceptions import AstropyWarning
+from .angles import Angle
 
-__all__ = ['Distance', 'CartesianPoints', 'cartesian_to_spherical',
-           'spherical_to_cartesian']
+__all__ = ['Distance']
 
 
-# FIXME: make this subclass Quantity once Quantity is in master
-class Distance(object):
+__doctest_requires__ = {'*': ['scipy']}
+
+
+class Distance(u.SpecificTypeQuantity):
     """
     A one-dimensional distance.
 
-    This can be initialized in one of three ways: a distance and a unit,
-    a `~astropy.units.quantity.Quantity` object, or a redshift and
-    (optionally) a cosmology.  `value` and `unit` may be provided as
-    positional arguments, but `z` and `cosmology` are only valid as
-    keyword arguments (see examples).
+    This can be initialized in one of four ways:
+
+    * A distance ``value`` (array or float) and a ``unit``
+    * A `~astropy.units.Quantity` object
+    * A redshift and (optionally) a cosmology.
+    * Providing a distance modulus
 
     Parameters
     ----------
-    value : scalar or `~astropy.units.quantity.Quantity`
-        The value of this distance
-    unit : `~astropy.units.core.UnitBase`
-        The units for this distance.  Must have dimensions of distance.
+    value : scalar or `~astropy.units.Quantity`.
+        The value of this distance.
+    unit : `~astropy.units.UnitBase`
+        The units for this distance, *if* ``value`` is not a
+        `~astropy.units.Quantity`. Must have dimensions of distance.
     z : float
         A redshift for this distance.  It will be converted to a distance
         by computing the luminosity distance for this redshift given the
-        cosmology specified by `cosmology`.
-    cosmology : `~astropy.cosmology.Cosmology` or None
-        A cosmology that will be used to compute the distance from `z`.
-        If None, the current cosmology will be used (see
+        cosmology specified by ``cosmology``. Must be given as a keyword
+        argument.
+    cosmology : ``Cosmology`` or `None`
+        A cosmology that will be used to compute the distance from ``z``.
+        If `None`, the current cosmology will be used (see
         `astropy.cosmology` for details).
+    distmod : float or `~astropy.units.Quantity`
+        The distance modulus for this distance. Note that if ``unit`` is not
+        provided, a guess will be made at the unit between AU, pc, kpc, and Mpc.
+    parallax : `~astropy.units.Quantity` or `~astropy.coordinates.Angle`
+        The parallax in angular units.
+    dtype : `~numpy.dtype`, optional
+        See `~astropy.units.Quantity`.
+    copy : bool, optional
+        See `~astropy.units.Quantity`.
+    order : {'C', 'F', 'A'}, optional
+        See `~astropy.units.Quantity`.
+    subok : bool, optional
+        See `~astropy.units.Quantity`.
+    ndmin : int, optional
+        See `~astropy.units.Quantity`.
+    allow_negative : bool, optional
+        Whether to allow negative distances (which are possible is some
+        cosmologies).  Default: ``False``.
 
     Raises
     ------
-    astropy.units.core.UnitsException
-        If the `unit` is not a distance.
+    `~astropy.units.UnitsError`
+        If the ``unit`` is not a distance.
+    ValueError
+        If value specified is less than 0 and ``allow_negative=False``.
+
+        If ``z`` is provided with a ``unit`` or ``cosmology`` is provided
+        when ``z`` is *not* given, or ``value`` is given as well as ``z``.
+
 
     Examples
     --------
     >>> from astropy import units as u
-    >>> from astropy.cosmology import WMAP3
+    >>> from astropy.cosmology import WMAP5, WMAP7
     >>> d1 = Distance(10, u.Mpc)
     >>> d2 = Distance(40, unit=u.au)
     >>> d3 = Distance(value=5, unit=u.kpc)
     >>> d4 = Distance(z=0.23)
-    >>> d5 = Distance(z=0.23, cosmology=WMAP3)
+    >>> d5 = Distance(z=0.23, cosmology=WMAP5)
+    >>> d6 = Distance(distmod=24.47)
+    >>> d7 = Distance(Distance(10 * u.Mpc))
+    >>> d8 = Distance(parallax=21.34*u.mas)
     """
 
-    def __init__(self, *args, **kwargs):
-        if len(args) == 1 and isinstance(args[0], Distance):
-            # just copy
-            self._value = args[0]._value
-            self._unit = args[0]._unit
-        elif len(args) == 1 and isinstance(args[0], u.Quantity):
-            self._value = args[0].value
-            self._unit = args[0].unit
-        elif 'z' in kwargs:
-            z = kwargs.pop('z')
-            cosmo = kwargs.pop('cosmology', None)
-            if cosmo is None:
-                cosmo = cosmology.get_current()
+    _equivalent_unit = u.m
+    _include_easy_conversion_members = True
 
-            if len(args) > 0 or len(kwargs) > 0:
-                raise TypeError('Cannot give both distance and redshift')
+    def __new__(cls, value=None, unit=None, z=None, cosmology=None,
+                distmod=None, parallax=None, dtype=None, copy=True, order=None,
+                subok=False, ndmin=0, allow_negative=False):
 
-            self._value = cosmo.luminosity_distance(z)
-            self._unit = u.Mpc
+        if z is not None:
+            if value is not None or distmod is not None:
+                raise ValueError('Should given only one of `value`, `z` '
+                                 'or `distmod` in Distance constructor.')
+
+            if cosmology is None:
+                from astropy.cosmology import default_cosmology
+                cosmology = default_cosmology.get()
+
+            value = cosmology.luminosity_distance(z)
+            # Continue on to take account of unit and other arguments
+            # but a copy is already made, so no longer necessary
+            copy = False
+
         else:
-            if len(args) == 0:
-                value = kwargs.pop('value', None)
-                unit = kwargs.pop('unit', None)
-            elif len(args) == 1:
-                value = args[0]
-                unit = kwargs.pop('unit', None)
-            elif len(args) == 2:
-                value, unit = args
-            else:
-                raise TypeError('Distance constructor cannot take more than 2 arguments')
+            if cosmology is not None:
+                raise ValueError('A `cosmology` was given but `z` was not '
+                                 'provided in Distance constructor')
 
-            if len(kwargs) > 0:
-                raise TypeError('Invalid keywords provided to Distance: ' +
-                                str(kwargs.keys()))
+            value_msg = ('Should given only one of `value`, `z`, `distmod`, or '
+                         '`parallax` in Distance constructor.')
+            n_not_none = np.sum([x is not None
+                                 for x in [value, z, distmod, parallax]])
+            if n_not_none > 1:
+                raise ValueError(value_msg)
 
-            if value is None:
-                raise ValueError('A value for the distance must be provided')
-            if unit is None:
-                raise u.UnitsException('A unit must be provided for distance.')
+            if distmod is not None:
+                value = cls._distmod_to_pc(distmod)
+                if unit is None:
+                    # if the unit is not specified, guess based on the mean of
+                    # the log of the distance
+                    meanlogval = np.log10(value.value).mean()
+                    if meanlogval > 6:
+                        unit = u.Mpc
+                    elif meanlogval > 3:
+                        unit = u.kpc
+                    elif meanlogval < -3:  # ~200 AU
+                        unit = u.AU
+                    else:
+                        unit = u.pc
 
-            if not unit.is_equivalent(u.m):
-                raise u.UnitsException('provided unit for Distance is not a length')
-            self._value = value
-            self._unit = unit
+                # Continue on to take account of unit and other arguments
+                # but a copy is already made, so no longer necessary
+                copy = False
 
-    def __repr__(self):
-        return "<{0} {1:.5f} {2!s}>".format(type(self).__name__, self._value, self._unit)
+            elif parallax is not None:
+                value = parallax.to_value(u.pc, equivalencies=u.parallax())
+                unit = u.pc
 
-    @property
-    def lightyears(self):
-        """
-        The value of this distance in light years
-        """
-        return self._unit.to(u.lyr, self._value)
+                # Continue on to take account of unit and other arguments
+                # but a copy is already made, so no longer necessary
+                copy = False
 
-    @property
-    def lyr(self):
-        """Short for :attr:`.lightyears`"""
-        return self.lightyears
+                if np.any(parallax < 0):
+                    if allow_negative:
+                        warnings.warn(
+                            "Negative parallaxes are converted to NaN "
+                            "distances even when `allow_negative=True`, "
+                            "because negative parallaxes cannot be transformed "
+                            "into distances. See discussion in this paper: "
+                            "https://arxiv.org/abs/1507.02105", AstropyWarning)
+                    else:
+                        raise ValueError("Some parallaxes are negative, which "
+                                         "are notinterpretable as distances. "
+                                         "See the discussion in this paper: "
+                                         "https://arxiv.org/abs/1507.02105 . "
+                                         "If you want parallaxes to pass "
+                                         "through, with negative parallaxes "
+                                         "instead becoming NaN, use the "
+                                         "`allow_negative=True` argument.")
 
-    @property
-    def parsecs(self):
-        """
-        The value of this distance in parsecs
-        """
-        return self._unit.to(u.parsec, self._value)
+            elif value is None:
+                raise ValueError('None of `value`, `z`, `distmod`, or '
+                                 '`parallax` were given to Distance '
+                                 'constructor')
 
-    @property
-    def pc(self):
-        """Short for :attr:`.parsecs`"""
-        return self.parsecs
+        # now we have arguments like for a Quantity, so let it do the work
+        distance = super().__new__(
+            cls, value, unit, dtype=dtype, copy=copy, order=order,
+            subok=subok, ndmin=ndmin)
 
-    @property
-    def kiloparsecs(self):
-        """
-        The value of this distance in kiloparsecs
-        """
-        return self._unit.to(u.kpc, self._value)
+        # This invalid catch block can be removed when the minimum numpy
+        # version is >= 1.19 (NUMPY_LT_1_19)
+        with np.errstate(invalid='ignore'):
+            any_negative = np.any(distance.value < 0)
 
-    @property
-    def kpc(self):
-        """Short for :attr:`.kiloparsecs`"""
-        return self.kiloparsecs
+        if not allow_negative and any_negative:
+            raise ValueError("Distance must be >= 0.  Use the argument "
+                             "'allow_negative=True' to allow negative values.")
 
-    @property
-    def megaparsecs(self):
-        """
-        The value of this distance in megaparsecs
-        """
-        return self._unit.to(u.Mpc, self._value)
-
-    @property
-    def Mpc(self):
-        """Short for :attr:`.megaparsecs`"""
-        return self.megaparsecs
-
-    @property
-    def astronomical_units(self):
-        """
-        The value of this distance in astronomical units
-        """
-        return self._unit.to(u.au, self._value)
-
-    @property
-    def au(self):
-        """Short for :attr:`.astronomical_units`"""
-        return self.astronomical_units
-
-    @property
-    def meters(self):
-        """
-        The value of this distance in meters
-        """
-        return self._unit.to(u.m, self._value)
-
-    @property
-    def m(self):
-        """Short for :attr:`.meters`"""
-        return self.meters
-
-    @property
-    def kilometers(self):
-        """
-        The value of this distance in kilometers
-        """
-        return self._unit.to(u.km, self._value)
-
-    @property
-    def km(self):
-        """Short for :attr:`.kilometers`"""
-        return self.kilometers
-
-    @property
-    def redshift(self):
-        """
-        The redshift for this distance assuming its physical distance is
-        a luminosity distance.
-
-        .. note::
-            This uses the "current" cosmology to determine the appropriate
-            distance to redshift conversions.  See `astropy.cosmology`
-            for details on how to change this.
-
-        """
-        return self.compute_z()
+        return distance
 
     @property
     def z(self):
-        """Short for :attr:`.redshift`"""
-        return self.redshift
+        """Short for ``self.compute_z()``"""
+        return self.compute_z()
 
     def compute_z(self, cosmology=None):
         """
@@ -216,192 +201,35 @@ class Distance(object):
 
         Parameters
         ----------
-        cosmology : `~astropy.cosmology.cosmology` or None
-            The cosmology to assume for this calculation, or None to use the
-            current cosmology.
-
-        """
-        from ..cosmology import luminosity_distance
-        from scipy import optimize
-
-        # FIXME: array: need to make this calculation more vector-friendly
-
-        f = lambda z, d, cos: (luminosity_distance(z, cos) - d) ** 2
-        return optimize.brent(f, (self.Mpc, cosmology))
-
-
-class CartesianPoints(object):
-    """
-    A cartesian representation of a point in three-dimensional space.
-
-    Attributes
-    ----------
-    x : number or array
-        The first cartesian coordinate.
-    y : number or array
-        The second cartesian coordinate.
-    z : number or array
-        The third cartesian coordinate.
-    unit : `~astropy.units.UnitBase` object or None
-        The physical unit of the coordinate values.
-    """
-
-    def __init__(self, x, y, z, unit=None):
-        self.x = x
-        self.y = y
-        self.z = z
-        self.unit = unit
-
-    def to_spherical(self):
-        """
-        Converts to the spherical representation of this point.
+        cosmology : ``Cosmology`` or `None`
+            The cosmology to assume for this calculation, or `None` to use the
+            current cosmology (see `astropy.cosmology` for details).
 
         Returns
         -------
-        r : float or array
-            The radial coordinate (in the same units as the inputs).
-        lat : float or array
-            The latitude in radians
-        lon : float or array
-            The longitude in radians
-
+        z : float
+            The redshift of this distance given the provided ``cosmology``.
         """
-        return cartesian_to_spherical(self.x, self.y, self.z)
 
-    def __repr__(self):
-        return '<CartesianPoints ({x}, {y}, {z}) {unit}>'.format(x=self.x,
-                y=self.y, z=self.z, unit=self.unit)
+        if cosmology is None:
+            from astropy.cosmology import default_cosmology
+            cosmology = default_cosmology.get()
 
-    def __eq__(self, other):
-        return (isinstance(other, CartesianPoints) and self.x == other.x and
-                self.y == other.y and self.z == other.z and
-                self.unit == other.unit)
+        from astropy.cosmology import z_at_value
+        return z_at_value(cosmology.luminosity_distance, self, ztol=1.e-10)
 
-    def __add__(self, other):
-        if isinstance(other, CartesianPoints) or (hasattr(other, 'x') and
-            hasattr(other, 'y') and hasattr(other, 'z') and
-            hasattr(other, 'unit')):
-            newx = self.x + other.unit.to(self.unit, other.x)
-            newy = self.y + other.unit.to(self.unit, other.y)
-            newz = self.z + other.unit.to(self.unit, other.z)
-        else:
-            msg = "unsupported operand type(s) for +: '{sel}' and '{other}'"
-            raise TypeError(msg.format(type(self).__name__,
-                                        type(other).__name__))
-        return CartesianPoints(newx, newy, newz, self.unit)
+    @property
+    def distmod(self):
+        """The distance modulus as a `~astropy.units.Quantity`"""
+        val = 5. * np.log10(self.to_value(u.pc)) - 5.
+        return u.Quantity(val, u.mag, copy=False)
 
-    def __sub__(self, other):
-        if isinstance(other, CartesianPoints) or (hasattr(other, 'x') and
-            hasattr(other, 'y') and hasattr(other, 'z') and
-            hasattr(other, 'unit')):
-            newx = self.x - other.unit.to(self.unit, other.x)
-            newy = self.y - other.unit.to(self.unit, other.y)
-            newz = self.z - other.unit.to(self.unit, other.z)
-        else:
-            msg = "unsupported operand type(s) for -: '{sel}' and '{other}'"
-            raise TypeError(msg.format(type(self).__name__,
-                                        type(other).__name__))
-        return CartesianPoints(newx, newy, newz, self.unit)
+    @classmethod
+    def _distmod_to_pc(cls, dm):
+        dm = u.Quantity(dm, u.mag)
+        return cls(10 ** ((dm.value + 5) / 5.), u.pc, copy=False)
 
-#<------------transformation-related utility functions----------------->
-
-
-def cartesian_to_spherical(x, y, z):
-    """
-    Converts 3D rectangular cartesian coordinates to spherical polar
-    coordinates.
-
-    Note that the resulting angles are latitude/longitude or
-    elevation/azimuthal form.  I.e., the origin is along the equator
-    rather than at the north pole.
-
-    .. note::
-        This is a low-level function used internally in
-        `astropy.coordinates`.  It is provided for users if they really
-        want to use it, but it is recommended that you use the
-        `astropy.coordinates` coordinate systems.
-
-    Parameters
-    ----------
-    x : scalar or array-like
-        The first cartesian coordinate.
-    y : scalar or array-like
-        The second cartesian coordinate.
-    z : scalar or array-like
-        The third cartesian coordinate.
-
-    Returns
-    -------
-    r : float or array
-        The radial coordinate (in the same units as the inputs).
-    lat : float or array
-        The latitude in radians
-    lon : float or array
-        The longitude in radians
-    """
-    import math
-
-    xsq = x ** 2
-    ysq = y ** 2
-    zsq = z ** 2
-
-    r = (xsq + ysq + zsq) ** 0.5
-    s = (xsq + ysq) ** 0.5
-
-    if np.isscalar(x) and np.isscalar(y) and np.isscalar(z):
-        lon = math.atan2(y, x)
-        lat = math.atan2(z, s)
-    else:
-        lon = np.arctan2(y, x)
-        lat = np.arctan2(z, s)
-
-    return r, lat, lon
-
-
-def spherical_to_cartesian(r, lat, lon):
-    """
-    Converts spherical polar coordinates to rectangular cartesian
-    coordinates.
-
-    Note that the input angles should be in latitude/longitude or
-    elevation/azimuthal form.  I.e., the origin is along the equator
-    rather than at the north pole.
-
-    .. note::
-        This is a low-level function used internally in
-        `astropy.coordinates`.  It is provided for users if they really
-        want to use it, but it is recommended that you use the
-        `astropy.coordinates` coordinate systems.
-
-    Parameters
-    ----------
-    r : scalar or array-like
-        The radial coordinate (in the same units as the inputs).
-    lat : scalar or array-like
-        The latitude in radians
-    lon : scalar or array-like
-        The longitude in radians
-
-    Returns
-    -------
-    x : float or array
-        The first cartesian coordinate.
-    y : float or array
-        The second cartesian coordinate.
-    z : float or array
-        The third cartesian coordinate.
-
-
-    """
-    import math
-
-    if np.isscalar(r) and np.isscalar(lat) and np.isscalar(lon):
-        x = r * math.cos(lat) * math.cos(lon)
-        y = r * math.cos(lat) * math.sin(lon)
-        z = r * math.sin(lat)
-    else:
-        x = r * np.cos(lat) * np.cos(lon)
-        y = r * np.cos(lat) * np.sin(lon)
-        z = r * np.sin(lat)
-
-    return x, y, z
+    @property
+    def parallax(self):
+        """The parallax angle as an `~astropy.coordinates.Angle` object"""
+        return Angle(self.to(u.milliarcsecond, u.parallax()))

@@ -5,8 +5,8 @@
 
 #define NO_IMPORT_ARRAY
 
-#include "sip_wrap.h"
-#include "docstrings.h"
+#include "astropy_wcs/sip_wrap.h"
+#include "astropy_wcs/docstrings.h"
 #include "wcs.h"
 
 static void
@@ -47,7 +47,7 @@ convert_matrix(
   }
 
   *array = (PyArrayObject*)PyArray_ContiguousFromAny(
-      pyobj, PyArray_DOUBLE, 2, 2);
+      pyobj, NPY_DOUBLE, 2, 2);
   if (*array == NULL) {
     return -1;
   }
@@ -102,7 +102,7 @@ PySip_init(
     goto exit;
   }
 
-  crpix = (PyArrayObject*)PyArray_ContiguousFromAny(py_crpix, PyArray_DOUBLE,
+  crpix = (PyArrayObject*)PyArray_ContiguousFromAny(py_crpix, NPY_DOUBLE,
                                                     1, 1);
   if (crpix == NULL) {
     goto exit;
@@ -148,6 +148,9 @@ PySip_pix2foc(
   int            origin     = 1;
   PyArrayObject* pixcrd     = NULL;
   PyArrayObject* foccrd     = NULL;
+  double*        foccrd_data = NULL;
+  unsigned int   nelem      = 0;
+  unsigned int   i, j;
   int            status     = -1;
   const char*    keywords[] = {
     "pixcrd", "origin", NULL };
@@ -164,7 +167,7 @@ PySip_pix2foc(
     return NULL;
   }
 
-  pixcrd = (PyArrayObject*)PyArray_ContiguousFromAny(pixcrd_obj, PyArray_DOUBLE, 2, 2);
+  pixcrd = (PyArrayObject*)PyArray_ContiguousFromAny(pixcrd_obj, NPY_DOUBLE, 2, 2);
   if (pixcrd == NULL) {
     goto exit;
   }
@@ -175,7 +178,7 @@ PySip_pix2foc(
   }
 
   foccrd = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(pixcrd),
-                                             PyArray_DOUBLE);
+                                             NPY_DOUBLE);
   if (foccrd == NULL) {
     goto exit;
   }
@@ -188,6 +191,15 @@ PySip_pix2foc(
                        (const double*)PyArray_DATA(pixcrd),
                        (double*)PyArray_DATA(foccrd));
   unoffset_array(pixcrd, origin);
+
+  /* Adjust for crpix */
+  foccrd_data = (double *)PyArray_DATA(foccrd);
+  nelem = (unsigned int)PyArray_DIM(foccrd, 0);
+  for (i = 0; i < nelem; ++i) {
+    for (j = 0; j < 2; ++j) {
+      foccrd_data[i*2 + j] -= self->x.crpix[j];
+    }
+  }
   unoffset_array(foccrd, origin);
   Py_END_ALLOW_THREADS
 
@@ -220,6 +232,9 @@ PySip_foc2pix(
   PyArrayObject* foccrd     = NULL;
   PyArrayObject* pixcrd     = NULL;
   int            status     = -1;
+  double*        foccrd_data = NULL;
+  unsigned int   nelem      = 0;
+  unsigned int   i, j;
   const char*    keywords[] = {
     "foccrd", "origin", NULL };
 
@@ -235,7 +250,7 @@ PySip_foc2pix(
     return NULL;
   }
 
-  foccrd = (PyArrayObject*)PyArray_ContiguousFromAny(foccrd_obj, PyArray_DOUBLE, 2, 2);
+  foccrd = (PyArrayObject*)PyArray_ContiguousFromAny(foccrd_obj, NPY_DOUBLE, 2, 2);
   if (foccrd == NULL) {
     goto exit;
   }
@@ -246,7 +261,7 @@ PySip_foc2pix(
   }
 
   pixcrd = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(foccrd),
-                                             PyArray_DOUBLE);
+                                             NPY_DOUBLE);
   if (pixcrd == NULL) {
     status = 2;
     goto exit;
@@ -254,11 +269,27 @@ PySip_foc2pix(
 
   Py_BEGIN_ALLOW_THREADS
   preoffset_array(foccrd, origin);
+  /* Adjust for crpix */
+  foccrd_data = (double *)PyArray_DATA(foccrd);
+  nelem = (unsigned int)PyArray_DIM(foccrd, 0);
+  for (i = 0; i < nelem; ++i) {
+    for (j = 0; j < 2; ++j) {
+      foccrd_data[i*2 + j] += self->x.crpix[j];
+    }
+  }
+
   status = sip_foc2pix(&self->x,
                        (unsigned int)PyArray_DIM(pixcrd, 1),
                        (unsigned int)PyArray_DIM(pixcrd, 0),
                        (double*)PyArray_DATA(foccrd),
                        (double*)PyArray_DATA(pixcrd));
+
+  /* Adjust for crpix */
+  for (i = 0; i < nelem; ++i) {
+    for (j = 0; j < 2; ++j) {
+      foccrd_data[i*2 + j] -= self->x.crpix[j];
+    }
+  }
   unoffset_array(foccrd, origin);
   unoffset_array(pixcrd, origin);
   Py_END_ALLOW_THREADS
@@ -443,12 +474,7 @@ static PyMethodDef PySip_methods[] = {
 };
 
 PyTypeObject PySipType = {
-  #if PY3K
   PyVarObject_HEAD_INIT(NULL, 0)
-  #else
-  PyObject_HEAD_INIT(NULL)
-  0,                            /*ob_size*/
-  #endif
   "astropy.wcs.Sip",            /*tp_name*/
   sizeof(PySip),                /*tp_basicsize*/
   0,                            /*tp_itemsize*/

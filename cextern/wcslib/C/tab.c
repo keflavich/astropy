@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,7 +22,7 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: tab.c,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: tab.c,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *===========================================================================*/
 
 #include <math.h>
@@ -33,6 +33,7 @@
 #include "wcserr.h"
 #include "wcsmath.h"
 #include "wcsprintf.h"
+#include "wcsutil.h"
 #include "tab.h"
 
 const int TABSET = 137;
@@ -63,11 +64,11 @@ int tabini(int alloc, int M, const int K[], struct tabprm *tab)
   if (tab == 0x0) return TABERR_NULL_POINTER;
 
   /* Initialize error message handling. */
-  err = &(tab->err);
-  if (tab->err && tab->flag != -1) {
-    free(tab->err);
+  if (tab->flag == -1) {
+    tab->err = 0x0;
   }
-  tab->err = 0x0;
+  err = &(tab->err);
+  wcserr_clear(err);
 
 
   if (M <= 0) {
@@ -97,6 +98,14 @@ int tabini(int alloc, int M, const int K[], struct tabprm *tab)
 
   /* Initialize memory management. */
   if (tab->flag == -1 || tab->m_flag != TABSET) {
+    if (tab->flag == -1) {
+      tab->sense   = 0x0;
+      tab->p0      = 0x0;
+      tab->delta   = 0x0;
+      tab->extrema = 0x0;
+      tab->set_M   = 0;
+    }
+
     tab->m_flag  = 0;
     tab->m_M     = 0;
     tab->m_N     = 0;
@@ -114,14 +123,6 @@ int tabini(int alloc, int M, const int K[], struct tabprm *tab)
     }
 
     if (tab->m_coord == (double *)0x1) tab->m_coord = 0x0;
-  }
-
-  if (tab->flag == -1) {
-    tab->sense   = 0x0;
-    tab->p0      = 0x0;
-    tab->delta   = 0x0;
-    tab->extrema = 0x0;
-    tab->set_M   = 0;
   }
 
 
@@ -410,6 +411,58 @@ int tabcpy(int alloc, const struct tabprm *tabsrc, struct tabprm *tabdst)
 
 /*--------------------------------------------------------------------------*/
 
+int tabcmp(
+  int dummy,
+  double tol,
+  const struct tabprm *tab1,
+  const struct tabprm *tab2,
+  int *equal)
+
+{
+  int m, M, N;
+
+  /* Avert nuisance compiler warnings about unused parameters. */
+  (void)dummy;
+
+  if (tab1  == 0x0) return TABERR_NULL_POINTER;
+  if (tab2  == 0x0) return TABERR_NULL_POINTER;
+  if (equal == 0x0) return TABERR_NULL_POINTER;
+
+  *equal = 0;
+
+  if (tab1->M != tab2->M) {
+    return 0;
+  }
+
+  M = tab1->M;
+
+  if (!wcsutil_intEq(M, tab1->K, tab2->K) ||
+      !wcsutil_intEq(M, tab1->map, tab2->map) ||
+      !wcsutil_Eq(M, tol, tab1->crval, tab2->crval)) {
+    return 0;
+  }
+
+  N = M;
+  for (m = 0; m < M; m++) {
+    if (!wcsutil_Eq(tab1->K[m], tol, tab1->index[m], tab2->index[m])) {
+      return 0;
+    }
+
+    N *= tab1->K[m];
+  }
+
+  if (!wcsutil_Eq(N, tol, tab1->coord, tab2->coord)) {
+    return 0;
+  }
+
+  *equal = 1;
+
+  return 0;
+}
+
+
+/*--------------------------------------------------------------------------*/
+
 int tabfree(struct tabprm *tab)
 
 {
@@ -471,10 +524,7 @@ int tabfree(struct tabprm *tab)
   tab->extrema = 0x0;
   tab->set_M   = 0;
 
-  if (tab->err) {
-    free(tab->err);
-    tab->err = 0x0;
-  }
+  wcserr_clear(&(tab->err));
 
   tab->flag = 0;
 
@@ -520,7 +570,7 @@ int tabprt(const struct tabprm *tab)
   WCSPRINTF_PTR("      crval: ", tab->crval, "\n");
   wcsprintf("            ");
   for (m = 0; m < tab->M; m++) {
-    wcsprintf("  %- 11.5g", tab->crval[m]);
+    wcsprintf("  %#- 11.5g", tab->crval[m]);
   }
   wcsprintf("\n");
 
@@ -534,7 +584,7 @@ int tabprt(const struct tabprm *tab)
         if (k%5 == 0) {
           wcsprintf("\n            ");
         }
-        wcsprintf("  %- 11.5g", tab->index[m][k]);
+        wcsprintf("  %#- 11.5g", tab->index[m][k]);
       }
       wcsprintf("\n");
     }
@@ -556,7 +606,7 @@ int tabprt(const struct tabprm *tab)
 
     wcsprintf("             (*%s)", text);
     for (m = 0; m < tab->M; m++) {
-      wcsprintf("  %- 11.5g", *(dp++));
+      wcsprintf("  %#- 11.5g", *(dp++));
     }
     wcsprintf("\n");
   }
@@ -585,7 +635,7 @@ int tabprt(const struct tabprm *tab)
   if (tab->delta) {
     wcsprintf("            ");
     for (m = 0; m < tab->M; m++) {
-      wcsprintf("  %- 11.5g", tab->delta[m]);
+      wcsprintf("  %#- 11.5g", tab->delta[m]);
     }
     wcsprintf("\n");
   }
@@ -607,7 +657,7 @@ int tabprt(const struct tabprm *tab)
     wcsprintf("             (*,*%s)", text);
     for (m = 0; m < 2*tab->M; m++) {
       if (m == tab->M) wcsprintf("->  ");
-      wcsprintf("  %- 11.5g", *(dp++));
+      wcsprintf("  %#- 11.5g", *(dp++));
     }
     wcsprintf("\n");
   }
@@ -647,6 +697,20 @@ int tabprt(const struct tabprm *tab)
   WCSPRINTF_PTR("    m_coord: ", tab->m_coord, "");
   if (tab->m_coord == tab->coord) wcsprintf("  (= coord)");
   wcsprintf("\n");
+
+  return 0;
+}
+
+/*--------------------------------------------------------------------------*/
+
+int tabperr(const struct tabprm *tab, const char *prefix)
+
+{
+  if (tab == 0x0) return TABERR_NULL_POINTER;
+
+  if (tab->err) {
+    wcserr_prt(tab->err, prefix);
+  }
 
   return 0;
 }
@@ -1047,9 +1111,11 @@ int tabx2s(
       tab->delta[m] = upsilon - p1;
 
       if (p1 == 0) {
+        /* Extrapolation below p1 == 1. */
         tab->p0[m] += 1;
         tab->delta[m] -= 1.0;
       } else if (p1 == *Km && *Km > 1) {
+        /* Extrapolation above p1 == K_m. */
         tab->p0[m] -= 1;
         tab->delta[m] += 1.0;
       }
@@ -1105,6 +1171,12 @@ next:
 
 /*--------------------------------------------------------------------------*/
 
+/* Helper functions used only by tabs2x(). */
+static int tabedge(struct tabprm *);
+static int tabrow(struct tabprm *, const double *);
+static int tabvox(struct tabprm *, const double *, int, double **,
+                  unsigned int *);
+
 int tabs2x(
   struct tabprm* tab,
   int ncoord,
@@ -1115,10 +1187,6 @@ int tabs2x(
 
 {
   static const char *function = "tabs2x";
-
-  int tabedge(struct tabprm *);
-  int tabrow(struct tabprm *, const double *);
-  int tabvox(struct tabprm *, const double *, int, double **, unsigned int *);
 
   int edge, i, ic, iv, k, *Km, M, m, n, nv, offset, status;
   double *dcrd, delta, *Psi, psi_m, **tabcoord, upsilon;
@@ -1163,8 +1231,10 @@ int tabs2x(
         if (edge || tabrow(tab, wp)) {
           /* No, skip it. */
           ic += tab->K[0];
-          tab->p0[1]++;
-          edge = tabedge(tab);
+          if (1 < M) {
+            tab->p0[1]++;
+            edge = tabedge(tab);
+          }
 
           /* Because ic will be incremented when the loop is reentered. */
           ic--;
@@ -1257,6 +1327,7 @@ int tabs2x(
       /* Coordinate not found. */
       *statp = 1;
       status = wcserr_set(TAB_ERRMSG(TABERR_BAD_WORLD));
+
     } else {
       /* Determine the intermediate world coordinates. */
       Km = tab->K;
@@ -1311,24 +1382,28 @@ int tabs2x(
 }
 
 /*----------------------------------------------------------------------------
-* Convenience routine to deal with of edge effects in tabprm::p0.
+* Convenience routine to check whether tabprm::p0 has been incremented beyond
+* the end of an index vector and if so move it to the start of the next one.
+* Returns 1 if tabprm::p0 is sitting at the end of any non-degenerate index
+* vector.
 *---------------------------------------------------------------------------*/
 
 int tabedge(struct tabprm* tab)
 
 {
-  int edge, *Km, m;
+  int edge, m;
 
   edge = 0;
-  Km = tab->K;
-  for (m = 0; m < tab->M; m++, Km++) {
-    if (tab->p0[m] == *Km) {
-      /* p0 has been incremented beyond the end of the row, point it to the
-         next one. */
+  for (m = 0; m < tab->M; m++) {
+    if (tab->p0[m] == tab->K[m]) {
+      /* p0 has been incremented beyond the end of an index vector, point it
+         to the next one. */
       tab->p0[m] = 0;
-      tab->p0[m+1]++;
-    } else if (tab->p0[m] == *Km - 1 && *Km > 1) {
-      /* p0 is sitting at the end of a non-degenerate row. */
+      if (m < tab->M-1) {
+        tab->p0[m+1]++;
+      }
+    } else if (tab->p0[m] == tab->K[m]-1 && tab->K[m] > 1) {
+      /* p0 is sitting at the end of a non-degenerate index vector. */
       edge = 1;
     }
   }
@@ -1368,8 +1443,8 @@ int tabedge(struct tabprm* tab)
 int tabrow(struct tabprm* tab, const double *wp)
 
 {
-  int iv, M, m, nv, offset;
-  unsigned int eq, gt, lt;
+  int M, m, offset;
+  unsigned int eq, gt, iv, lt, nv;
   const double tol = 1e-10;
   double *cp, w;
 
@@ -1454,7 +1529,7 @@ int tabrow(struct tabprm* tab, const double *wp)
 * dissect the voxel.  It is ignored when tabvox() is called from outside
 * (level == 0).
 *
-* It is assumed that the image dimensions are no greater than 16.
+* It is assumed that the image dimensions are no greater than 32.
 ----------------------------------------------------------------------------*/
 
 int tabvox(
@@ -1465,10 +1540,10 @@ int tabvox(
   unsigned int *vox)
 
 {
-  int i, iv, jv, M, m, nv;
-  unsigned int eq, et, gt, lt, vox2[16];
+  int i, M, m;
+  unsigned int eq, et, gt, iv, jv, lt, nv, vox2[32];
   const double tol = 1e-10;
-  double coord[16], *cp, dv, w, wgt;
+  double coord[32], *cp, dv, w, wgt;
 
   M = tab->M;
 

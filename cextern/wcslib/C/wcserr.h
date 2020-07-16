@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -23,8 +23,12 @@
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   Module author: Michael Droettboom
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: wcserr.h,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: wcserr.h,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *=============================================================================
+*
+* WCSLIB 7.3 - C routines that implement the FITS World Coordinate System
+* (WCS) standard.  Refer to the README file provided with WCSLIB for an
+* overview of the library.
 *
 * Summary of the wcserr routines
 * ------------------------------
@@ -72,7 +76,7 @@
 *     Name of the source file where the error occurred as given by the
 *     __FILE__ preprocessor macro.
 *
-*   char msg[WCSERR_MSG_LENGTH]
+*   char *msg
 *     Informative error message.
 *
 *
@@ -114,7 +118,7 @@
 *
 * wcserr_clear() - Clear a wcserr struct
 * --------------------------------------
-* wcserr_clear() clears the error (if any) contained in a wcserr struct.
+* wcserr_clear() clears (deletes) a wcserr struct.
 *
 * Given and returned:
 *   err       struct wcserr**
@@ -216,14 +220,12 @@
 extern "C" {
 #endif
 
-#define WCSERR_MSG_LENGTH 160
-
 struct wcserr {
   int  status;			/* Status code for the error.               */
   int  line_no;			/* Line number where the error occurred.    */
   const char *function;		/* Function name.                           */
   const char *file;		/* Source file name.                        */
-  char msg[WCSERR_MSG_LENGTH];	/* Informative error message.               */
+  char *msg;			/* Informative error message.               */
 };
 
 /* Size of the wcserr struct in int units, used by the Fortran wrappers. */

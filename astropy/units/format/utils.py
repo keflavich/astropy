@@ -1,18 +1,21 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
+
 """
 Utilities shared by the different formats.
 """
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
 
-import functools
-import re
+
+import warnings
+from fractions import Fraction
+
+from astropy.utils.misc import did_you_mean
+from ..utils import maybe_simple_fraction
 
 
 def get_grouped_by_powers(bases, powers):
     """
     Groups the powers and bases in the given
-    `~astropy.units.core.CompositeUnit` into positive powers and
+    `~astropy.units.CompositeUnit` into positive powers and
     negative powers for easy display on either side of a solidus.
 
     Parameters
@@ -40,24 +43,24 @@ def get_grouped_by_powers(bases, powers):
     return positive, negative
 
 
-def split_mantissa_exponent(v):
+def split_mantissa_exponent(v, format_spec=".8g"):
     """
     Given a number, split it into its mantissa and base 10 exponent
     parts, each as strings.  If the exponent is too small, it may be
     returned as the empty string.
 
-    The precise rules are based on Python's "general purpose" (`g`)
-    formatting.
-
     Parameters
     ----------
     v : float
+
+    format_spec : str, optional
+        Number representation formatting string
 
     Returns
     -------
     mantissa, exponent : tuple of strings
     """
-    x = "{0:.8g}".format(v).split('e')
+    x = format(v, format_spec).split('e')
     if x[0] != '1.' + '0' * (len(x[0]) - 2):
         m = x[0]
     else:
@@ -80,18 +83,19 @@ def decompose_to_known_units(unit, func):
 
     Parameters
     ----------
-    unit : `astropy.units.UnitBase` instance
+    unit : `~astropy.units.UnitBase` instance
 
     func : callable
-        This function will be called to determine if a given unit is "known".
-        If the unit is not known, this function should raise a `ValueError`.
+        This function will be called to determine if a given unit is
+        "known".  If the unit is not known, this function should raise a
+        `ValueError`.
 
     Returns
     -------
-    unit : `astropy.units.UnitBase` instance
+    unit : `~astropy.units.UnitBase` instance
         A flattened unit.
     """
-    from .. import core
+    from astropy.units import core
     if isinstance(unit, core.CompositeUnit):
         new_unit = core.Unit(unit.scale)
         for base, power in zip(unit.bases, unit.powers):
@@ -107,32 +111,106 @@ def decompose_to_known_units(unit, func):
         return unit
 
 
-DEBUG = False
+def format_power(power):
+    """
+    Converts a value for a power (which may be floating point or a
+    `fractions.Fraction` object), into a string looking like either
+    an integer or a fraction, if the power is close to that.
+    """
+    if not hasattr(power, 'denominator'):
+        power = maybe_simple_fraction(power)
+        if getattr(power, 'denonimator', None) == 1:
+            power = power.nominator
+
+    return str(power)
 
 
-def _trace(func):
-    """
-    A utility decorator to help debug the parser.
-    """
-    def run(self, s, loc, toks):
-        print(func.__name__, toks, end=' ')
+def _try_decomposed(unit, format_decomposed):
+    represents = getattr(unit, '_represents', None)
+    if represents is not None:
         try:
-            result = func(self, s, loc, toks)
-        except Exception as e:
-            print("Exception: ", e.message)
-            raise
-        print(result)
-        return result
+            represents_string = format_decomposed(represents)
+        except ValueError:
+            pass
+        else:
+            return represents_string
 
-    if DEBUG:
-        return functools.update_wrapper(run, func)
-    else:
-        return func
+    decomposed = unit.decompose()
+    if decomposed is not unit:
+        try:
+            decompose_string = format_decomposed(decomposed)
+        except ValueError:
+            pass
+        else:
+            return decompose_string
+
+    return None
 
 
-def cleanup_pyparsing_error(e):
+def did_you_mean_units(s, all_units, deprecated_units, format_decomposed):
     """
-    Given a pyparsing.ParseException, returns a string that has the
-    line and column numbers removed.
+    A wrapper around `astropy.utils.misc.did_you_mean` that deals with
+    the display of deprecated units.
+
+    Parameters
+    ----------
+    s : str
+        The invalid unit string
+
+    all_units : dict
+        A mapping from valid unit names to unit objects.
+
+    deprecated_units : sequence
+        The deprecated unit names
+
+    format_decomposed : callable
+        A function to turn a decomposed version of the unit into a
+        string.  Should return `None` if not possible
+
+    Returns
+    -------
+    msg : str
+        A string message with a list of alternatives, or the empty
+        string.
     """
-    return re.sub(", \(line:[0-9]+, col:[0-9]+\)", "", str(e))
+    def fix_deprecated(x):
+        if x in deprecated_units:
+            results = [x + ' (deprecated)']
+            decomposed = _try_decomposed(
+                all_units[x], format_decomposed)
+            if decomposed is not None:
+                results.append(decomposed)
+            return results
+        return (x,)
+
+    return did_you_mean(s, all_units, fix=fix_deprecated)
+
+
+def unit_deprecation_warning(s, unit, standard_name, format_decomposed):
+    """
+    Raises a UnitsWarning about a deprecated unit in a given format.
+    Suggests a decomposed alternative if one is available.
+
+    Parameters
+    ----------
+    s : str
+        The deprecated unit name.
+
+    unit : astropy.units.core.UnitBase
+        The unit object.
+
+    standard_name : str
+        The name of the format for which the unit is deprecated.
+
+    format_decomposed : callable
+        A function to turn a decomposed version of the unit into a
+        string.  Should return `None` if not possible
+    """
+    from astropy.units.core import UnitsWarning
+
+    message = "The unit '{}' has been deprecated in the {} standard.".format(
+        s, standard_name)
+    decomposed = _try_decomposed(unit, format_decomposed)
+    if decomposed is not None:
+        message += f" Suggested: {decomposed}."
+    warnings.warn(message, UnitsWarning)

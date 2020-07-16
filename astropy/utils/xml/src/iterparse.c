@@ -40,13 +40,35 @@
 static Py_ssize_t
 next_power_of_2(Py_ssize_t n)
 {
-    /* Calculate the next-highest power of two */
+    /* Calculate the next-higher power of two that is >= 'n' */
+
+    /* These instructions are intended for uint32_t and originally
+       from http://www-graphics.stanford.edu/~seander/bithacks.html#RoundUpPowerOf2
+       Py_ssize_t is the same as the C datatype ssize_t and is
+       32/64-bits on 32-bit and 64-bit systems respectively. The implementation
+       here accounts for both.
+
+       Limitations: Since a signed size_t (ssize_t) was required for the underlying CPython implementation,
+       on 32 bit systems, it will not be possible to allocate memory sizes between
+       SSIZE_MAX and SIZE_MAX (i.e, for allocations in the range [2^31, 2^32 - 1] bytes)
+       even though such memory might be available and accessible on the (32-bit) computer. That
+       said, since the underlying CPython implementation *also* uses Py_ssize_t (i.e., ssize_t),
+       it is safe to assume that such memory allocations would probably not be usable anyway.
+
+       TLDR: Will work on 64-bit machines but be careful on 32 bit machines when reading in
+       ~ 2+ GB of memory -- @manodeep 2020-03-27
+    */
+
     n--;
     n |= n >> 1;
     n |= n >> 2;
     n |= n >> 4;
     n |= n >> 8;
     n |= n >> 16;
+    if(sizeof(Py_ssize_t) > 4) {
+        n |= n >> 32; /* this works for 64-bit systems but will need to be updated if (Py)_ssize_t
+                         ever increases beyond 64-bits */
+    }
     n++;
 
     return n;
@@ -55,13 +77,6 @@ next_power_of_2(Py_ssize_t n)
 /******************************************************************************
  * Python version compatibility macros
  ******************************************************************************/
-#if PY_MAJOR_VERSION >= 3
-#  define IS_PY3K
-#endif
-
-#  ifndef Py_TYPE
-#    define Py_TYPE(o) ((o)->ob_type)
-#  endif
 
 #if BYTEORDER == 1234
 # define TD_AS_INT      0x00004454
@@ -120,6 +135,51 @@ typedef struct {
     PyObject*  td_singleton;    /* String "TD" */
     PyObject*  read_args;       /* (buffersize) */
 } IterParser;
+
+/******************************************************************************
+ * Tuple queue
+ ******************************************************************************/
+
+/**
+ * Extend the tuple queue based on the new length of the textual XML input.
+ * This helps to cope with situations where the input is longer than
+ * requested (as occurs with transparent decompression of the input
+ * stream), and for the initial allocation to combine the logic in one place.
+ */
+static int
+queue_realloc(IterParser *self, Py_ssize_t req_size)
+{
+    PyObject** new_queue;
+    Py_ssize_t n = req_size / 2;
+
+    if (n <= self->queue_size)
+        return 0;
+
+    new_queue = realloc(self->queue, sizeof(PyObject*) * (size_t)n);
+
+    if (new_queue == NULL) {
+        PyErr_SetString(PyExc_MemoryError, "Out of memory for XML parsing queue.");
+        /*
+         * queue_realloc() is only called from IterParser_init() or
+         * IterParser_next() in situations where the queue is clear
+         * and empty.  If this function were to be used in other
+         * situations it would be wise to iterate over the queue and
+         * clear/decrement the individual references, to save work for
+         * the garbage collector (in an out-of-memory situation).
+         */
+        goto fail;
+    }
+
+    self->queue = new_queue;
+    self->queue_size = n;
+    return 0;
+
+fail:
+    free(self->queue);
+    self->queue = NULL;
+    self->queue_size = 0;
+    return -1;
+}
 
 /******************************************************************************
  * Text buffer
@@ -251,7 +311,6 @@ remove_namespace(const XML_Char *name)
     const XML_Char*  name_start = NULL;
 
     /* If there is a namespace specifier, just chop it off */
-    name_start = name;
     for (name_start = name; *name_start != '\0'; ++name_start) {
         if (*name_start == ':') {
             break;
@@ -326,19 +385,7 @@ startElement(IterParser *self, const XML_Char *name, const XML_Char **atts)
             }
             do {
                 if (*(*(att_ptr + 1)) != 0) {
-                    /* Python < 2.6.5 can't handle unicode keyword
-                       arguments.  Since those were coming from here
-                       (the dictionary of attributes), we use byte
-                       strings for the keys instead.  Should be fine
-                       for VOTable, since it has ascii attribute
-                       names, but that's not true of XML in
-                       general. */
-                    #if PY_VERSION_HEX < 0x02060500
-                    /* Due to Python issue #4978 */
-                    key = PyBytes_FromString(*att_ptr);
-                    #else
                     key = PyUnicode_FromString(*att_ptr);
-                    #endif
                     if (key == NULL) {
                         goto fail;
                     }
@@ -674,6 +721,7 @@ IterParser_next(IterParser* self)
             }
 
             if (buflen < self->buffersize) {
+                /* EOF detection method only works for local regular files */
                 self->done = 1;
             }
         /* Handle a real C file descriptor or handle -- this is faster
@@ -682,13 +730,19 @@ IterParser_next(IterParser* self)
             buflen = (Py_ssize_t)read(
                 self->file, self->buffer, (size_t)self->buffersize);
             if (buflen == -1) {
-                PyErr_SetFromErrno(PyExc_IOError);
+                PyErr_SetFromErrno(PyExc_OSError);
                 goto fail;
             } else if (buflen < self->buffersize) {
+                /* EOF detection method only works for local regular files */
                 self->done = 1;
             }
 
             buf = self->buffer;
+        }
+
+        if(queue_realloc(self, buflen)) {
+            Py_XDECREF(data);
+            goto fail;
         }
 
         /* Feed the read buffer to expat, which will call the event handlers */
@@ -999,10 +1053,7 @@ IterParser_init(IterParser *self, PyObject *args, PyObject *kwds)
         goto fail;
     }
 
-    self->queue_size = buffersize / 2;
-    self->queue = malloc(sizeof(PyObject*) * (size_t)self->queue_size);
-    if (self->queue == NULL) {
-        PyErr_SetString(PyExc_MemoryError, "Out of memory");
+    if (queue_realloc(self, buffersize)) {
         goto fail;
     }
 
@@ -1053,12 +1104,7 @@ static PyMethodDef IterParser_methods[] =
 
 static PyTypeObject IterParserType =
 {
-    #ifdef IS_PY3K
     PyVarObject_HEAD_INIT(NULL, 0)
-    #else
-    PyObject_HEAD_INIT(NULL)
-    0,                            /*ob_size*/
-    #endif
     "astropy.utils.xml._iterparser.IterParser",    /*tp_name*/
     sizeof(IterParser),         /*tp_basicsize*/
     0,                          /*tp_itemsize*/
@@ -1120,6 +1166,63 @@ static const char* escapes[] = {
     "\0", "\0"
 };
 
+/* Implementation of escape_xml.
+ *
+ * Returns:
+ *  * 0  : No need to escape
+ *  * >0 : output is escaped
+ *  * -1 : error
+ */
+static Py_ssize_t
+_escape_xml_impl(const char *input, Py_ssize_t input_len,
+                 char **output, const char **escapes)
+{
+    Py_ssize_t i;
+    int count = 0;
+    char *p = NULL;
+    const char** esc;
+    const char* ent;
+
+    for (i = 0; i < input_len; ++i) {
+        for (esc = escapes; ; esc += 2) {
+            if ((unsigned char)input[i] > **esc) {
+                break;
+            } else if (input[i] == **esc) {
+                ++count;
+                break;
+            }
+        }
+    }
+
+    if (!count) {
+        return 0;
+    }
+
+    p = malloc((input_len + 1 + count * 5) * sizeof(char));
+    if (p == NULL) {
+        PyErr_SetString(PyExc_MemoryError, "Out of memory");
+        return -1;
+    }
+    *output = p;
+
+    for (i = 0; i < input_len; ++i) {
+        for (esc = escapes; ; esc += 2) {
+            if ((unsigned char)input[i] > **esc) {
+                *(p++) = input[i];
+                break;
+            } else if (input[i] == **esc) {
+                for (ent = *(esc + 1); *ent != '\0'; ++ent) {
+                    *(p++) = *ent;
+                }
+                break;
+            }
+        }
+    }
+
+    *p = 0;
+    return p - *output;
+}
+
 /*
  * Returns a copy of the given string (8-bit or Unicode) with the XML
  * control characters converted to XML character entities.
@@ -1131,125 +1234,66 @@ static PyObject*
 _escape_xml(PyObject* self, PyObject *args, const char** escapes)
 {
     PyObject* input_obj;
+    PyObject* input_coerce = NULL;
     PyObject* output_obj;
-    int count = 0;
-    Py_UNICODE* uinput = NULL;
     char* input = NULL;
     Py_ssize_t input_len;
-    Py_UNICODE* uoutput = NULL;
     char* output = NULL;
-    Py_UNICODE* up = NULL;
-    char* p = NULL;
-    Py_ssize_t i;
-    const char** esc;
-    const char* ent;
+    Py_ssize_t output_len;
 
     if (!PyArg_ParseTuple(args, "O:escape_xml", &input_obj)) {
         return NULL;
     }
 
-    if (PyUnicode_Check(input_obj)) {
-        uinput = PyUnicode_AsUnicode(input_obj);
-        if (uinput == NULL) {
+    /* First, try as Unicode */
+    if (!PyBytes_Check(input_obj)) {
+        input_coerce = PyObject_Str(input_obj);
+    }
+    if (input_coerce) {
+        input = (char*)PyUnicode_AsUTF8AndSize(input_coerce, &input_len);
+        if (input == NULL) {
+            Py_DECREF(input_coerce);
             return NULL;
         }
 
-        input_len = PyUnicode_GetSize(input_obj);
-
-        for (i = 0; i < input_len; ++i) {
-            for (esc = escapes; ; esc += 2) {
-                if (uinput[i] > (Py_UNICODE)**esc) {
-                    break;
-                } else if (uinput[i] == (Py_UNICODE)**esc) {
-                    ++count;
-                    break;
-                }
-            }
-        }
-
-        if (count) {
-            uoutput = malloc((input_len + 1 + count * 5) * sizeof(Py_UNICODE));
-            if (uoutput == NULL) {
-                PyErr_SetString(PyExc_MemoryError, "Out of memory");
-                return NULL;
-            }
-
-            up = uoutput;
-            for (i = 0; i < input_len; ++i) {
-                for (esc = escapes; ; esc += 2) {
-                    if (uinput[i] > (Py_UNICODE)**esc) {
-                        *(up++) = uinput[i];
-                        break;
-                    } else if (uinput[i] == (Py_UNICODE)**esc) {
-                        for (ent = *(esc + 1); *ent != '\0'; ++ent) {
-                            *(up++) = (Py_UNICODE)*ent;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            *up = 0;
-
-            output_obj = PyUnicode_FromUnicode(uoutput, up - uoutput);
-            free(uoutput);
-            return output_obj;
-        }
-    } else if (PyBytes_Check(input_obj)) {
-        if (PyBytes_AsStringAndSize(input_obj, &input, &input_len) == -1) {
+        output_len = _escape_xml_impl(input, input_len, &output, escapes);
+        if (output_len < 0) {
+            Py_DECREF(input_coerce);
             return NULL;
         }
-
-        for (i = 0; i < input_len; ++i) {
-            for (esc = escapes; ; esc += 2) {
-                if (input[i] > **esc) {
-                    break;
-                } else if (input[i] == **esc) {
-                    ++count;
-                    break;
-                }
-            }
-        }
-
-        if (count) {
-            output = malloc((input_len + 1 + count * 5) * sizeof(char));
-            if (output == NULL) {
-                PyErr_SetString(PyExc_MemoryError, "Out of memory");
-                return NULL;
-            }
-
-            p = output;
-            for (i = 0; i < input_len; ++i) {
-                for (esc = escapes; ; esc += 2) {
-                    if (input[i] > **esc) {
-                        *(p++) = input[i];
-                        break;
-                    } else if (input[i] == **esc) {
-                        for (ent = *(esc + 1); *ent != '\0'; ++ent) {
-                            *(p++) = *ent;
-                        }
-                        break;
-                    }
-                }
-            }
-
-            *p = 0;
-
-            output_obj = PyBytes_FromStringAndSize(output, p - output);
+        if (output_len > 0) {
+            Py_DECREF(input_coerce);
+            output_obj = PyUnicode_FromStringAndSize(output, output_len);
             free(output);
             return output_obj;
         }
-    } else {
-        #ifdef IS_PY3K
-        PyErr_SetString(PyExc_TypeError, "must be str or bytes");
-        #else
-        PyErr_SetString(PyExc_TypeError, "must be str or unicode");
-        #endif
-        return NULL;
+        return input_coerce;
     }
 
-    Py_INCREF(input_obj);
-    return input_obj;
+    /* Now try as bytes */
+    input_coerce = PyObject_Bytes(input_obj);
+    if (input_coerce) {
+        if (PyBytes_AsStringAndSize(input_coerce, &input, &input_len) == -1) {
+            Py_DECREF(input_coerce);
+            return NULL;
+        }
+
+        output_len = _escape_xml_impl(input, input_len, &output, escapes);
+        if (output_len < 0) {
+            Py_DECREF(input_coerce);
+            return NULL;
+        }
+        if (output_len > 0) {
+            Py_DECREF(input_coerce);
+            output_obj = PyBytes_FromStringAndSize(output, output_len);
+            free(output);
+            return output_obj;
+        }
+        return input_coerce;
+    }
+
+    PyErr_SetString(PyExc_TypeError, "must be convertible to str or bytes");
+    return NULL;
 }
 
 static PyObject*
@@ -1281,7 +1325,6 @@ struct module_state {
     void* none;
 };
 
-#ifdef IS_PY3K
 static int module_traverse(PyObject* m, visitproc visit, void* arg)
 {
     return 0;
@@ -1304,39 +1347,20 @@ static struct PyModuleDef moduledef = {
     NULL
 };
 
-#  define INITERROR return NULL
-
 PyMODINIT_FUNC
 PyInit__iterparser(void)
-#else /* Not PY3K */
-#  define INITERROR return
-
-#  ifndef PyMODINIT_FUNC  /* declarations for DLL import/export */
-#    define PyMODINIT_FUNC void
-#  endif
-
-PyMODINIT_FUNC
-init_iterparser(void)
-#endif
 {
     PyObject* m;
-
-#ifdef IS_PY3K
     m = PyModule_Create(&moduledef);
-#else
-    m = Py_InitModule3("_iterparser", module_methods, "Fast XML parser");
-#endif
 
     if (m == NULL)
-        INITERROR;
+        return NULL;
 
     if (PyType_Ready(&IterParserType) < 0)
-        INITERROR;
+        return NULL;
 
     Py_INCREF(&IterParserType);
     PyModule_AddObject(m, "IterParser", (PyObject *)&IterParserType);
 
-#ifdef IS_PY3K
     return m;
-#endif
 }

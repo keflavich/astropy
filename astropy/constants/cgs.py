@@ -3,24 +3,13 @@
 Astronomical and physics constants in cgs units.  See :mod:`astropy.constants`
 for a complete listing of constants defined in Astropy.
 """
+import itertools
 
-# Only constants that cannot be converted directly from S.I. are defined here.
+from .constant import Constant
+from .config import codata, iaudata
 
-from .constant import EMConstant
-from . import si
-
-# PHYSICAL CONSTANTS
-
-# Electron charge
-e_esu = EMConstant(si.e.abbrev, si.e.name, si.e.value * si.c.value * 10.0,
-                   'statC', si.e.uncertainty * si.c.value * 10.0,
-                   si.e.reference, system='esu')
-
-
-e_emu = EMConstant(si.e.abbrev, si.e.name, si.e.value / 10, 'abC',
-                   si.e.uncertainty / 10, si.e.reference, system='emu')
-
-
-e_gauss = EMConstant(si.e.abbrev, si.e.name, si.e.value * si.c.value * 10.0,
-                     'Fr', si.e.uncertainty * si.c.value * 10.0,
-                     si.e.reference, system='gauss')
+for _nm, _c in itertools.chain(sorted(vars(codata).items()),
+                               sorted(vars(iaudata).items())):
+    if (isinstance(_c, Constant) and _c.abbrev not in locals()
+            and _c.system in ['esu', 'gauss', 'emu']):
+        locals()[_c.abbrev] = _c

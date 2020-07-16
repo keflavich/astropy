@@ -1,11 +1,13 @@
+:orphan:
+
 .. _git-resources:
 
-=============
+*************
 Git resources
-=============
+*************
 
 Tutorials and summaries
-=======================
+***********************
 
 * `GitHub Help`_ has an excellent series of how-to guides.
 * `learn.github`_ has an excellent series of tutorials
@@ -21,23 +23,12 @@ Tutorials and summaries
 * `git foundation`_ expands on the `git parable`_.
 * Fernando Perez' git page |emdash| `Fernando's git page`_ |emdash| many
   links and tips
+* Fernando Perez's `ipython notebook on using git in science`_
 * A good but technical page on `git concepts`_
 * `git svn crash course`_: git for those of us used to subversion_
 
-Advanced git workflow
-=====================
-
-There are many ways of working with git; here are some posts on the
-rules of thumb that other projects have come up with:
-
-* Linus Torvalds on `git management`_
-* Linus Torvalds on `linux git workflow`_ .  Summary; use the git tools
-  to make the history of your edits as clean as possible; merge from
-  upstream edits as little as possible in branches where you are doing
-  active development.
-
 Manual pages online
-===================
+*******************
 
 You can get these on your own machine with (e.g) ``git help push`` or
 (same thing) ``git push --help``, but, for convenience, here are the
@@ -57,3 +48,7 @@ online manual pages for some common commands:
 * `git status`_
 
 .. include:: links.inc
+
+
+
+

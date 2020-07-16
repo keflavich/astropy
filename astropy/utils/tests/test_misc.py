@@ -1,125 +1,148 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-from .. import misc
-from ...tests.helper import remote_data
-from .. import data
 
+import json
+import locale
+import os
+import socket
+from datetime import datetime
 
-#namedtuple is needed for find_mod_objs so it can have a non-local module
-from collections import namedtuple
-import warnings
+import pytest
+import numpy as np
 
-
-def test_pkg_finder():
-    """
-    Tests that the `utils.misc.find_current_module` function works. Note that
-    this also implicitly tests compat.misc._patched_getmodule
-    """
-    mod1 = 'astropy.utils.misc'
-    mod2 = 'astropy.utils.tests.test_misc'
-    mod3 = 'astropy.utils.tests.test_misc'
-    assert misc.find_current_module(0).__name__ == mod1
-    assert misc.find_current_module(1).__name__ == mod2
-    assert misc.find_current_module(0, True).__name__ == mod3
-
-
-def test_find_mod_objs():
-    lnms, fqns, objs = misc.find_mod_objs('astropy')
-
-    # this import  is after the above call intentionally to make sure
-    # find_mod_objs properly imports astropy on its own
-    import astropy
-
-    # just check for astropy.test ... other things might be added, so we
-    # shouldn't check that it's the only thing
-    assert 'test' in lnms
-    assert astropy.test in objs
-
-    lnms, fqns, objs = misc.find_mod_objs('astropy.utils.tests.test_misc',
-                                          onlylocals=False)
-    assert 'namedtuple' in lnms
-    assert 'collections.namedtuple' in fqns
-    assert namedtuple in objs
-
-    lnms, fqns, objs = misc.find_mod_objs('astropy.utils.tests.test_misc',
-                                          onlylocals=True)
-    assert 'namedtuple' not in lnms
-    assert 'collections.namedtuple' not in fqns
-    assert namedtuple not in objs
-
-
-def test_find_current_mod():
-    from sys import getrecursionlimit
-    from ...tests.helper import pytest
-
-    thismodnm = __name__
-
-    assert misc.find_current_module(0) is misc
-    assert misc.find_current_module(1).__name__ == thismodnm
-    assert misc.find_current_module(getrecursionlimit() + 1) is None
-
-    assert misc.find_current_module(0, True).__name__ == thismodnm
-    assert misc.find_current_module(0, [misc]).__name__ == thismodnm
-    assert misc.find_current_module(0, ['astropy.utils.misc']).__name__ == thismodnm
-
-    with pytest.raises(ImportError):
-        misc.find_current_module(0, ['faddfdsasewrweriopunjlfiurrhujnkflgwhu'])
+from astropy.utils import data, misc
 
 
 def test_isiterable():
-    from numpy import array
-
     assert misc.isiterable(2) is False
     assert misc.isiterable([2]) is True
     assert misc.isiterable([1, 2, 3]) is True
-    assert misc.isiterable(array(2)) is False
-    assert misc.isiterable(array([1, 2, 3])) is True
+    assert misc.isiterable(np.array(2)) is False
+    assert misc.isiterable(np.array([1, 2, 3])) is True
 
 
-def test_deprecated_attribute():
-    class DummyClass:
-        def __init__(self):
-            self._foo = 42
+def test_signal_number_to_name_no_failure():
+    # Regression test for #5340: ensure signal_number_to_name throws no
+    # AttributeError (it used ".iteritems()" which was removed in Python3).
+    misc.signal_number_to_name(0)
 
-        def set_private(self):
-            self._foo = 100
 
-        foo = misc.deprecated_attribute('foo', '0.2')
-
-    dummy = DummyClass()
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.resetwarnings()
-        warnings.simplefilter('always')
-        x = dummy.foo
-
-    assert len(w) == 1
-    assert str(w[0].message) == ("The foo attribute is deprecated and may be "
-                                 "removed in a future version.")
-
-    with warnings.catch_warnings(record=True) as w:
-        warnings.resetwarnings()
-        warnings.simplefilter('always')
-        dummy.set_private()
-
-    assert len(w) == 0
-
-@remote_data
+@pytest.mark.remote_data
 def test_api_lookup():
-    strurl = misc.find_api_page('astropy.utils.misc', 'dev', False, timeout=3)
-    objurl = misc.find_api_page(misc, 'dev', False, timeout=3)
+    try:
+        strurl = misc.find_api_page('astropy.utils.misc', 'dev', False, timeout=3)
+        objurl = misc.find_api_page(misc, 'dev', False, timeout=3)
+    except socket.timeout:
+        if os.environ.get('CI', False):
+            pytest.xfail('Timed out in CI')
+        else:
+            raise
 
     assert strurl == objurl
-    assert strurl == 'http://devdocs.astropy.org/utils/index.html#module-astropy.utils.misc'
+    assert strurl == 'http://devdocs.astropy.org/utils/index.html#module-astropy.utils.misc'  # noqa
+
+    # Try a non-dev version
+    objurl = misc.find_api_page(misc, 'v3.2.1', False, timeout=3)
+    assert objurl == 'https://docs.astropy.org/en/v3.2.1/utils/index.html#module-astropy.utils.misc'  # noqa
 
 
 def test_skip_hidden():
-    import os
-
     path = data._find_pkg_data_path('data')
     for root, dirs, files in os.walk(path):
         assert '.hidden_file.txt' in files
         assert 'local.dat' in files
+        # break after the first level since the data dir contains some other
+        # subdirectories that don't have these files
+        break
 
     for root, dirs, files in misc.walk_skip_hidden(path):
         assert '.hidden_file.txt' not in files
         assert 'local.dat' in files
+        break
+
+
+def test_JsonCustomEncoder():
+    from astropy import units as u
+    assert json.dumps(np.arange(3), cls=misc.JsonCustomEncoder) == '[0, 1, 2]'
+    assert json.dumps(1+2j, cls=misc.JsonCustomEncoder) == '[1.0, 2.0]'
+    assert json.dumps(set([1, 2, 1]), cls=misc.JsonCustomEncoder) == '[1, 2]'
+    assert json.dumps(b'hello world \xc3\x85',
+                      cls=misc.JsonCustomEncoder) == '"hello world \\u00c5"'
+    assert json.dumps({1: 2},
+                      cls=misc.JsonCustomEncoder) == '{"1": 2}'  # default
+    assert json.dumps({1: u.m}, cls=misc.JsonCustomEncoder) == '{"1": "m"}'
+    # Quantities
+    tmp = json.dumps({'a': 5*u.cm}, cls=misc.JsonCustomEncoder)
+    newd = json.loads(tmp)
+    tmpd = {"a": {"unit": "cm", "value": 5.0}}
+    assert newd == tmpd
+    tmp2 = json.dumps({'a': np.arange(2)*u.cm}, cls=misc.JsonCustomEncoder)
+    newd = json.loads(tmp2)
+    tmpd = {"a": {"unit": "cm", "value": [0., 1.]}}
+    assert newd == tmpd
+    tmp3 = json.dumps({'a': np.arange(2)*u.erg/u.s}, cls=misc.JsonCustomEncoder)
+    newd = json.loads(tmp3)
+    tmpd = {"a": {"unit": "erg / s", "value": [0., 1.]}}
+    assert newd == tmpd
+
+
+@pytest.mark.filterwarnings("ignore")
+def test_inherit_docstrings():
+    class Base(metaclass=misc.InheritDocstrings):
+        def __call__(self, *args):
+            "FOO"
+            pass
+
+        @property
+        def bar(self):
+            "BAR"
+            pass
+
+    class Subclass(Base):
+        def __call__(self, *args):
+            pass
+
+        @property
+        def bar(self):
+            return 42
+
+    if Base.__call__.__doc__ is not None:
+        # TODO: Maybe if __doc__ is None this test should be skipped instead?
+        assert Subclass.__call__.__doc__ == "FOO"
+
+    if Base.bar.__doc__ is not None:
+        assert Subclass.bar.__doc__ == "BAR"
+
+
+def test_set_locale():
+    # First, test if the required locales are available
+    current = locale.setlocale(locale.LC_ALL)
+    try:
+        locale.setlocale(locale.LC_ALL, 'en_US')
+        locale.setlocale(locale.LC_ALL, 'de_DE')
+    except locale.Error as e:
+        pytest.skip(f'Locale error: {e}')
+    finally:
+        locale.setlocale(locale.LC_ALL, current)
+
+    date = datetime(2000, 10, 1, 0, 0, 0)
+    day_mon = date.strftime('%a, %b')
+
+    with misc._set_locale('en_US'):
+        assert date.strftime('%a, %b') == 'Sun, Oct'
+
+    with misc._set_locale('de_DE'):
+        assert date.strftime('%a, %b') == 'So, Okt'
+
+    # Back to original
+    assert date.strftime('%a, %b') == day_mon
+
+    with misc._set_locale(current):
+        assert date.strftime('%a, %b') == day_mon
+
+
+def test_dtype_bytes_or_chars():
+    assert misc.dtype_bytes_or_chars(np.dtype(np.float64)) == 8
+    assert misc.dtype_bytes_or_chars(np.dtype(object)) is None
+    assert misc.dtype_bytes_or_chars(np.dtype(np.int32)) == 4
+    assert misc.dtype_bytes_or_chars(np.array(b'12345').dtype) == 5
+    assert misc.dtype_bytes_or_chars(np.array('12345').dtype) == 5

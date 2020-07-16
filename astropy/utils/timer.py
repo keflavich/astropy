@@ -1,25 +1,28 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """General purpose timer related functions."""
 
-from __future__ import absolute_import, print_function, division
-
 # STDLIB
 import time
-from collections import Iterable
-from functools import partial
+import warnings
+from collections import OrderedDict
+from collections.abc import Iterable
+from functools import partial, wraps
 
 # THIRD-PARTY
 import numpy as np
 
 # LOCAL
-from . import OrderedDict
-from .. import units as u
-from .. import log
+from astropy import units as u
+from astropy import log
+from astropy import modeling
+from astropy.utils.decorators import deprecated
+from astropy.utils.exceptions import AstropyUserWarning
+
+__all__ = []
+__doctest_skip__ = ['*']
 
 
-__all__ = ['timefunc', 'RunTimePredictor']
-
-
+@deprecated('4.0', alternative='astroquery.utils.timer.timefunc')
 def timefunc(num_tries=1, verbose=True):
     """Decorator to time a function or method.
 
@@ -30,13 +33,7 @@ def timefunc(num_tries=1, verbose=True):
         average run time.
 
     verbose : bool, optional
-        Extra log INFO.
-
-    function
-        Function to time.
-
-    args, kwargs
-        Arguments to the function.
+        Extra log information.
 
     Returns
     -------
@@ -61,7 +58,7 @@ def timefunc(num_tries=1, verbose=True):
     To run the decorated function above:
 
     >>> t, y = timed_log(100)
-    INFO: timed_log took 9.29832458496e-06 s on AVERAGE for 100 calls. [...]
+    INFO: timed_log took 9.29832458496e-06 s on AVERAGE for 100 call(s). [...]
     >>> t
     9.298324584960938e-06
     >>> y
@@ -69,21 +66,23 @@ def timefunc(num_tries=1, verbose=True):
 
     """
     def real_decorator(function):
+        @wraps(function)
         def wrapper(*args, **kwargs):
             ts = time.time()
-            for i in xrange(num_tries):
+            for i in range(num_tries):
                 result = function(*args, **kwargs)
             te = time.time()
             tt = (te - ts) / num_tries
             if verbose:  # pragma: no cover
-                log.info('{0} took {1} s on AVERAGE for {2} calls.'.format(
+                log.info('{} took {} s on AVERAGE for {} call(s).'.format(
                     function.__name__, tt, num_tries))
             return tt, result
         return wrapper
     return real_decorator
 
 
-class RunTimePredictor(object):
+@deprecated('4.0', alternative='astroquery.utils.timer.RunTimePredictor')
+class RunTimePredictor:
     """Class to predict run time.
 
     .. note:: Only predict for single varying numeric input parameter.
@@ -101,49 +100,54 @@ class RunTimePredictor(object):
 
     Examples
     --------
-    >>> from astropy.utils.timer import RunTimePredictor
+    Set up a predictor for :math:`10^{x}`:
 
-    Set up a predictor for ``10**X``:
-
-    >>> p = RunTimePredictor(pow, 10)
+    >>> from astropy.utils.timer import RunTimePredictor  # doctest: +IGNORE_WARNINGS
+    >>> p = RunTimePredictor(pow, 10)  # doctest: +IGNORE_WARNINGS
 
     Give it baseline data to use for prediction and
     get the function output values:
 
     >>> p.time_func(range(10, 1000, 200))
-    >>> p.results
-    {10: 10000000000,
-     210: 10000000000...L,
-     410: 10000000000...L,
-     610: 10000000000...L,
-     810: 10000000000...L}
+    >>> for input, result in sorted(p.results.items()):
+    ...     print("pow(10, {0})\\n{1}".format(input, result))
+    pow(10, 10)
+    10000000000
+    pow(10, 210)
+    10000000000...
+    pow(10, 410)
+    10000000000...
+    pow(10, 610)
+    10000000000...
+    pow(10, 810)
+    10000000000...
 
-    Fit a straight line assuming ``arg**1`` relationship
+    Fit a straight line assuming :math:`\\text{arg}^{1}` relationship
     (coefficients are returned):
 
-    >>> p.do_fit()
-    array([  1.00135803e-08,   1.16777420e-05])
+    >>> p.do_fit()  # doctest: +SKIP
+    array([1.16777420e-05,  1.00135803e-08])
 
-    Predict run time for ``10**5000``:
+    Predict run time for :math:`10^{5000}`:
 
-    >>> p.predict_time(5000)
+    >>> p.predict_time(5000)  # doctest: +SKIP
     6.174564361572262e-05
 
     Plot the prediction:
 
-    >>> p.plot(xlabeltext='Power of 10')
+    >>> p.plot(xlabeltext='Power of 10')  # doctest: +SKIP
 
-    .. image:: ../../docs/_static/timer_prediction_pow10.png
+    .. image:: /_static/timer_prediction_pow10.png
         :width: 450px
         :alt: Example plot from `astropy.utils.timer.RunTimePredictor`
 
     When the changing argument is not the last, e.g.,
-    `pow(x, 2)`, something like this might work:
+    :math:`x^{2}`, something like this might work:
 
     >>> p = RunTimePredictor(lambda x: pow(x, 2))
-    >>> p.time_func([2,3,5])
-    >>> p.results
-    {2: 4, 3: 9, 5: 25}
+    >>> p.time_func([2, 3, 5])
+    >>> sorted(p.results.items())
+    [(2, 4), (3, 9), (5, 25)]
 
     """
     def __init__(self, func, *args, **kwargs):
@@ -152,7 +156,7 @@ class RunTimePredictor(object):
         self._cache_good = OrderedDict()
         self._cache_bad = []
         self._cache_est = OrderedDict()
-        self._cache_out = {}
+        self._cache_out = OrderedDict()
         self._fit_func = None
         self._power = None
 
@@ -177,7 +181,7 @@ class RunTimePredictor(object):
             try:
                 result = self._timed_pfunc(arg)
             except Exception as e:
-                log.warn(str(e))
+                warnings.warn(str(e), AstropyUserWarning)
                 self._cache_bad.append(arg)
             else:
                 self._cache_good[arg] = result[0]  # Run time
@@ -198,24 +202,35 @@ class RunTimePredictor(object):
         """
         if not isinstance(arglist, Iterable):
             arglist = [arglist]
-        dummy = map(self._cache_time, arglist)
+
+        # Preserve arglist order
+        for arg in arglist:
+            self._cache_time(arg)
 
     # FUTURE: Implement N^x * O(log(N)) fancy fitting.
-    def do_fit(self, power=1, deg=1, min_datapoints=3):
+    def do_fit(self, model=None, fitter=None, power=1, min_datapoints=3):
         """Fit a function to the lists of arguments and
         their respective run time in the cache.
 
-        .. math::
-
-            t = a[deg] + a[deg-1] * arg^{power} + ... + a[0] * (arg^{power})^{deg}
+        By default, this does a linear least-square fitting
+        to a straight line on run time w.r.t. argument values
+        raised to the given power, and returns the optimal
+        intercept and slope.
 
         Parameters
         ----------
+        model : `astropy.modeling.Model`
+            Model for the expected trend of run time (Y-axis)
+            w.r.t. :math:`\\text{arg}^{\\text{power}}` (X-axis).
+            If `None`, will use `~astropy.modeling.polynomial.Polynomial1D`
+            with ``degree=1``.
+
+        fitter : `astropy.modeling.fitting.Fitter`
+            Fitter for the given model to extract optimal coefficient values.
+            If `None`, will use `~astropy.modeling.fitting.LinearLSQFitter`.
+
         power : int, optional
             Power of values to fit.
-
-        deg : int, optional
-            Degree of polynomial to fit.
 
         min_datapoints : int, optional
             Minimum number of data points required for fitting.
@@ -224,22 +239,42 @@ class RunTimePredictor(object):
         Returns
         -------
         a : array_like
-            Fitted coefficients from `numpy.polyfit`.
+            Fitted `~astropy.modeling.FittableModel` parameters.
+
+        Raises
+        ------
+        ValueError
+            Insufficient data points for fitting.
+
+        ModelsError
+            Invalid model or fitter.
 
         """
         # Reset related attributes
         self._power = power
         self._cache_est = OrderedDict()
 
-        x_arr = np.array(self._cache_good.keys())
-        assert x_arr.size >= min_datapoints, \
-            'Requires {0} points but has {1}'.format(min_datapoints,
-                                                     x_arr.size)
+        x_arr = np.array(list(self._cache_good.keys()))
+        if x_arr.size < min_datapoints:
+            raise ValueError('requires {} points but has {}'.format(
+                min_datapoints, x_arr.size))
 
-        a = np.polyfit(x_arr**power, self._cache_good.values(), deg)
-        self._fit_func = np.poly1d(a)
+        if model is None:
+            model = modeling.models.Polynomial1D(1)
+        elif not isinstance(model, modeling.core.Model):
+            raise modeling.fitting.ModelsError(
+                f'{model} is not a model.')
 
-        return a
+        if fitter is None:
+            fitter = modeling.fitting.LinearLSQFitter()
+        elif not isinstance(fitter, modeling.fitting.Fitter):
+            raise modeling.fitting.ModelsError(
+                f'{fitter} is not a fitter.')
+
+        self._fit_func = fitter(
+            model, x_arr**power, list(self._cache_good.values()))
+
+        return self._fit_func.parameters
 
     def predict_time(self, arg):
         """Predict run time for given argument.
@@ -255,11 +290,17 @@ class RunTimePredictor(object):
         t_est : float
             Estimated run time for given argument.
 
+        Raises
+        ------
+        RuntimeError
+            No fitted data for prediction.
+
         """
         if arg in self._cache_est:
             t_est = self._cache_est[arg]
         else:
-            assert self._fit_func is not None, 'No fitted data for prediction'
+            if self._fit_func is None:
+                raise RuntimeError('no fitted data for prediction')
             t_est = self._fit_func(arg**self._power)
             self._cache_est[arg] = t_est
         return t_est
@@ -268,7 +309,7 @@ class RunTimePredictor(object):
              save_as=''):  # pragma: no cover
         """Plot prediction.
 
-        .. note:: Uses :mod:`matplotlib`.
+        .. note:: Uses `matplotlib <https://matplotlib.org/>`_.
 
         Parameters
         ----------
@@ -281,6 +322,11 @@ class RunTimePredictor(object):
         save_as : str, optional
             Save plot as given filename.
 
+        Raises
+        ------
+        RuntimeError
+            Insufficient data for plotting.
+
         """
         import matplotlib.pyplot as plt
 
@@ -288,30 +334,31 @@ class RunTimePredictor(object):
         x_arr = sorted(self._cache_good)
         y_arr = np.array([self._cache_good[x] for x in x_arr])
 
-        assert len(x_arr) > 1, 'Insufficient data for plotting'
+        if len(x_arr) <= 1:
+            raise RuntimeError('insufficient data for plotting')
 
         # Auto-ranging
         qmean = y_arr.mean() * u.second
         for cur_u in (u.minute, u.second, u.millisecond, u.microsecond,
                       u.nanosecond):
-            val = qmean.to(cur_u).value
+            val = qmean.to_value(cur_u)
             if 1000 > val >= 1:
                 break
-        y_arr = (y_arr * u.second).to(cur_u).value
+        y_arr = (y_arr * u.second).to_value(cur_u)
 
         fig, ax = plt.subplots()
         ax.plot(x_arr, y_arr, 'kx-', label='Actual')
 
         # Fitted data
         if self._fit_func is not None:
-            x_est = self._cache_est.keys()
-            y_est = (np.array(self._cache_est.values()) *
-                     u.second).to(cur_u).value
+            x_est = list(self._cache_est.keys())
+            y_est = (np.array(list(self._cache_est.values())) *
+                     u.second).to_value(cur_u)
             ax.scatter(x_est, y_est, marker='o', c='r', label='Predicted')
 
             x_fit = np.array(sorted(x_arr + x_est))
             y_fit = (self._fit_func(x_fit**self._power) *
-                     u.second).to(cur_u).value
+                     u.second).to_value(cur_u)
             ax.plot(x_fit, y_fit, 'b--', label='Fit')
 
         ax.set_xscale(xscale)

@@ -3,16 +3,15 @@
 Various XML-related utilities
 """
 
-from __future__ import division, absolute_import
 
 # ASTROPY
-from ...utils.xml import check as xml_check
-from ...utils.xml import validate
+from astropy.logger import log
+from astropy.utils import data
+from astropy.utils.xml import check as xml_check
+from astropy.utils.xml import validate
 
 # LOCAL
-from .exceptions import (warn_or_raise, vo_warn,
-     W02, W03, W04, W05)
-from ...utils import data
+from .exceptions import (warn_or_raise, vo_warn, W02, W03, W04, W05)
 
 
 __all__ = [
@@ -21,7 +20,7 @@ __all__ = [
     ]
 
 
-def check_id(ID, name='ID', config={}, pos=None):
+def check_id(ID, name='ID', config=None, pos=None):
     """
     Raises a `~astropy.io.votable.exceptions.VOTableSpecError` if *ID*
     is not a valid XML ID_.
@@ -35,7 +34,7 @@ def check_id(ID, name='ID', config={}, pos=None):
     return True
 
 
-def fix_id(ID, config={}, pos=None):
+def fix_id(ID, config=None, pos=None):
     """
     Given an arbitrary string, create one that can be used as an xml id.
 
@@ -53,7 +52,7 @@ def fix_id(ID, config={}, pos=None):
 _token_regex = r"(?![\r\l\t ])[^\r\l\t]*(?![\r\l\t ])"
 
 
-def check_token(token, attr_name, config={}, pos=None):
+def check_token(token, attr_name, config=None, pos=None):
     """
     Raises a `ValueError` if *token* is not a valid XML token.
 
@@ -64,7 +63,7 @@ def check_token(token, attr_name, config={}, pos=None):
     return True
 
 
-def check_mime_content_type(content_type, config={}, pos=None):
+def check_mime_content_type(content_type, config=None, pos=None):
     """
     Raises a `~astropy.io.votable.exceptions.VOTableSpecError` if
     *content_type* is not a valid MIME content type.
@@ -78,7 +77,7 @@ def check_mime_content_type(content_type, config={}, pos=None):
     return True
 
 
-def check_anyuri(uri, config={}, pos=None):
+def check_anyuri(uri, config=None, pos=None):
     """
     Raises a `~astropy.io.votable.exceptions.VOTableSpecError` if
     *uri* is not a valid URI.
@@ -91,7 +90,7 @@ def check_anyuri(uri, config={}, pos=None):
     return True
 
 
-def validate_schema(filename, version='1.2'):
+def validate_schema(filename, version='1.1'):
     """
     Validates the given file against the appropriate VOTable schema.
 
@@ -100,9 +99,10 @@ def validate_schema(filename, version='1.2'):
     filename : str
         The path to the XML file to validate
 
-    version : str
+    version : str, optional
         The VOTABLE version to check, which must be a string \"1.0\",
-        \"1.1\", or \"1.2\".
+        \"1.1\", \"1.2\" or \"1.3\".  If it is not one of these,
+        version \"1.1\" is assumed.
 
         For version \"1.0\", it is checked against a DTD, since that
         version did not have an XML Schema.
@@ -113,11 +113,14 @@ def validate_schema(filename, version='1.2'):
         Returns the returncode from xmllint and the stdout and stderr
         as strings
     """
-    assert version in ('1.0', '1.1', '1.2')
+    if version not in ('1.0', '1.1', '1.2', '1.3'):
+        log.info('{} has version {}, using schema 1.1'.format(
+            filename, version))
+        version = '1.1'
 
-    if version in ('1.1', '1.2'):
+    if version in ('1.1', '1.2', '1.3'):
         schema_path = data.get_pkg_data_filename(
-            'data/VOTable.v{0}.xsd'.format(version))
+            f'data/VOTable.v{version}.xsd')
     else:
         schema_path = data.get_pkg_data_filename(
             'data/VOTable.dtd')

@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,8 +22,13 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: wcstrig.h,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: wcstrig.h,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *=============================================================================
+*
+* WCSLIB 7.3 - C routines that implement the FITS World Coordinate System
+* (WCS) standard.  Refer to the README file provided with WCSLIB for an
+* overview of the library.
+*
 *
 * Summary of the wcstrig routines
 * -------------------------------
@@ -139,8 +144,8 @@
 * atan2d() - Polar angle of (x,y), in degrees
 * -------------------------------------------
 * atan2d() returns the polar angle, beta, in degrees, of polar coordinates
-* (rho,beta) corresponding Cartesian coordinates (x,y).  It is equivalent to
-* the arg(x,y) function of WCS Paper II, though with transposed arguments.
+* (rho,beta) corresponding to Cartesian coordinates (x,y).  It is equivalent
+* to the arg(x,y) function of WCS Paper II, though with transposed arguments.
 *
 * Given:
 *   y         double    Cartesian y-coordinate.

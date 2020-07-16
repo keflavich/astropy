@@ -3,6 +3,8 @@
 *.a
 *.o
 *.so
+*.pyd
+*.dll
 __pycache__
 
 # Ignore .c files by default to avoid including generated code. If you want to
@@ -13,12 +15,16 @@ __pycache__
 MANIFEST
 astropy/version.py
 astropy/cython_version.py
-astropy/astropy.cfg
 astropy/wcs/include/wcsconfig.h
+astropy/_erfa/core.py
 
 # Sphinx
 _build
 _generated
+docs/api
+docs/generated
+docs/visualization/ngc6976.jpeg
+docs/visualization/ngc6976-default.jpeg
 
 # Packages/installer info
 *.egg
@@ -26,6 +32,7 @@ _generated
 dist
 build
 eggs
+.eggs
 parts
 bin
 var
@@ -33,10 +40,14 @@ sdist
 develop-eggs
 .installed.cfg
 distribute-*.tar.gz
+.venv
+venv
 
 # Other
+.cache
 .tox
 .*.swp
+.*.swo
 *~
 .project
 .pydevproject
@@ -44,6 +55,20 @@ distribute-*.tar.gz
 .coverage
 cover
 htmlcov
+.hypothesis
 
 # Mac OSX
 .DS_Store
+
+# PyCharm
+.idea
+
+# Pytest
+v
+.pytest_cache
+
+# VSCode
+.vscode
+
+.tmp
+pip-wheel-metadata

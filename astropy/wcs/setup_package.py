@@ -1,51 +1,40 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-from __future__ import division  # confidence high
 
-CONTACT = "Michael Droettboom"
-EMAIL = "mdroe@stsci.edu"
-
-from distutils.core import Extension
+import io
+import os
 from os.path import join
 import os.path
+import shutil
 import sys
+from collections import defaultdict
 
-from astropy import setup_helpers
+from distutils.core import Extension
+from distutils.dep_util import newer_group
+
+import numpy
+
+from extension_helpers import import_file, write_if_different, get_compiler, pkg_config
 
 WCSROOT = os.path.relpath(os.path.dirname(__file__))
-WCSVERSION = "4.10"
+WCSVERSION = "7.3.0"
 
 
 def b(s):
     return s.encode('ascii')
 
-if sys.version_info[0] >= 3:
 
-    def string_escape(s):
-        s = s.decode('ascii').encode('ascii', 'backslashreplace')
-        s = s.replace(b('\n'), b('\\n'))
-        s = s.replace(b('\0'), b('\\0'))
-        return s.decode('ascii')
-
-    from io import StringIO
-    string_types = (str, bytes)
-else:
-
-    def string_escape(s):
-        # string_escape has subtle differences with the escaping done in Python
-        # 3 so correct for those too
-        s = s.encode('string_escape')
-        s = s.replace(r'\x00', r'\0')
-        return s.replace(r"\'", "'")
-
-    from cStringIO import StringIO
-    string_types = (str, unicode)
+def string_escape(s):
+    s = s.decode('ascii').encode('ascii', 'backslashreplace')
+    s = s.replace(b'\n', b'\\n')
+    s = s.replace(b'\0', b'\\0')
+    return s.decode('ascii')
 
 
 def determine_64_bit_int():
     """
     The only configuration parameter needed at compile-time is how to
     specify a 64-bit signed integer.  Python's ctypes module can get us
-    that information, but it is only available in Python 2.5 or later.
+    that information.
     If we can't be absolutely certain, we default to "long long int",
     which is correct on most platforms (x86, x86_64).  If we find
     platforms where this heuristic doesn't work, we may need to
@@ -70,17 +59,20 @@ def determine_64_bit_int():
         return "long long int"
 
 
-def write_wcsconfig_h():
+def write_wcsconfig_h(paths):
     """
     Writes out the wcsconfig.h header with local configuration.
     """
-    h_file = StringIO()
+    h_file = io.StringIO()
     h_file.write("""
+    /* The bundled version has WCSLIB_VERSION */
+    #define HAVE_WCSLIB_VERSION 1
+
     /* WCSLIB library version number. */
-    #define WCSLIB_VERSION {0}
+    #define WCSLIB_VERSION {}
 
     /* 64-bit integer data type. */
-    #define WCSLIB_INT64 {1}
+    #define WCSLIB_INT64 {}
 
     /* Windows needs some other defines to prevent inclusion of wcsset()
        which conflicts with wcslib's wcsset().  These need to be set
@@ -110,26 +102,27 @@ def write_wcsconfig_h():
 
     #endif
     """.format(WCSVERSION, determine_64_bit_int()))
-    setup_helpers.write_if_different(
-        join(WCSROOT, 'include', 'wcsconfig.h'),
-        h_file.getvalue().encode('ascii'))
+    content = h_file.getvalue().encode('ascii')
+    for path in paths:
+        write_if_different(path, content)
+
 
 ######################################################################
 # GENERATE DOCSTRINGS IN C
 
 
 def generate_c_docstrings():
-    from astropy.wcs import docstrings
+    docstrings = import_file(os.path.join(WCSROOT, 'docstrings.py'))
     docstrings = docstrings.__dict__
     keys = [
-        key for key in docstrings.keys()
-        if not key.startswith('__') and type(key) in string_types]
+        key for key, val in docstrings.items()
+        if not key.startswith('__') and isinstance(val, str)]
     keys.sort()
     docs = {}
     for key in keys:
         docs[key] = docstrings[key].encode('utf8').lstrip() + b'\0'
 
-    h_file = StringIO()
+    h_file = io.StringIO()
     h_file.write("""/*
 DO NOT EDIT!
 
@@ -140,21 +133,17 @@ its contents, edit astropy/wcs/docstrings.py
 #ifndef __DOCSTRINGS_H__
 #define __DOCSTRINGS_H__
 
-#if defined(_MSC_VER)
-void fill_docstrings(void);
-#endif
-
 """)
     for key in keys:
         val = docs[key]
-        h_file.write('extern char doc_{0}[{1}];\n'.format(key, len(val)))
+        h_file.write('extern char doc_{}[{}];\n'.format(key, len(val)))
     h_file.write("\n#endif\n\n")
 
-    setup_helpers.write_if_different(
-        join(WCSROOT, 'include', 'docstrings.h'),
+    write_if_different(
+        join(WCSROOT, 'include', 'astropy_wcs', 'docstrings.h'),
         h_file.getvalue().encode('utf-8'))
 
-    c_file = StringIO()
+    c_file = io.StringIO()
     c_file.write("""/*
 DO NOT EDIT!
 
@@ -166,112 +155,57 @@ MSVC, do not support string literals greater than 256 characters.
 */
 
 #include <string.h>
-#include "docstrings.h"
+#include "astropy_wcs/docstrings.h"
 
-#if defined(_MSC_VER)
 """)
     for key in keys:
         val = docs[key]
-        c_file.write('char doc_{0}[{1}];\n'.format(key, len(val)))
+        c_file.write('char doc_{0}[{1}] = {{\n'.format(key, len(val)))
+        for i in range(0, len(val), 12):
+            section = val[i:i+12]
+            c_file.write('    ')
+            c_file.write(''.join(f'0x{x:02x}, ' for x in section))
+            c_file.write('\n')
 
-    c_file.write("\nvoid fill_docstrings(void)\n{\n")
-    for key in keys:
-        val = docs[key]
-        # For portability across various compilers, we need to fill the
-        # docstrings in 256-character chunks
-        for i in range(0, len(val), 256):
-            chunk = string_escape(val[i:i + 256]).replace('"', '\\"')
-            c_file.write('   strncpy(doc_{0} + {1}, "{2}", {3});\n'.format(
-                key, i, chunk, min(len(val) - i, 256)))
-        c_file.write("\n")
-    c_file.write("\n}\n\n")
+        c_file.write("    };\n\n")
 
-    c_file.write("#else /* UNIX */\n")
-
-    for key in keys:
-        val = docs[key]
-        c_file.write('char doc_{0}[{1}] = "{2}";\n\n'.format(
-            key, len(val), string_escape(val).replace('"', '\\"')))
-
-    c_file.write("#endif\n")
-
-    setup_helpers.write_if_different(
+    write_if_different(
         join(WCSROOT, 'src', 'docstrings.c'),
         c_file.getvalue().encode('utf-8'))
 
 
-def get_extensions():
-    from astropy.version import debug
+def get_wcslib_cfg(cfg, wcslib_files, include_paths):
 
-    generate_c_docstrings()
+    debug = '--debug' in sys.argv
 
-    ######################################################################
-    # DISTUTILS SETUP
-    cfg = setup_helpers.DistutilsExtensionArgs()
-
-    cfg['include_dirs'].extend(['numpy', join(WCSROOT, "include")])
+    cfg['include_dirs'].append(numpy.get_include())
     cfg['define_macros'].extend([
         ('ECHO', None),
         ('WCSTRIG_MACRO', None),
         ('ASTROPY_WCS_BUILD', None),
-        ('_GNU_SOURCE', None),
-        ('WCSVERSION', WCSVERSION)])
+        ('_GNU_SOURCE', None)])
 
-    if (not setup_helpers.use_system_library('wcslib') or
-        sys.platform == 'win32'):
-        write_wcsconfig_h()
+    if ((int(os.environ.get('ASTROPY_USE_SYSTEM_WCSLIB', 0))
+            or int(os.environ.get('ASTROPY_USE_SYSTEM_ALL', 0)))
+            and not sys.platform == 'win32'):
+        wcsconfig_h_path = join(WCSROOT, 'include', 'wcsconfig.h')
+        if os.path.exists(wcsconfig_h_path):
+            os.unlink(wcsconfig_h_path)
+        for k, v in pkg_config(['wcslib'], ['wcs']).items():
+            cfg[k].extend(v)
+    else:
+        write_wcsconfig_h(include_paths)
 
         wcslib_path = join("cextern", "wcslib")  # Path to wcslib
         wcslib_cpath = join(wcslib_path, "C")  # Path to wcslib source files
-        wcslib_files = [  # List of wcslib files to compile
-            'flexed/wcsbth.c',
-            'flexed/wcspih.c',
-            'flexed/wcsulex.c',
-            'flexed/wcsutrn.c',
-            'cel.c',
-            'lin.c',
-            'log.c',
-            'prj.c',
-            'spc.c',
-            'sph.c',
-            'spx.c',
-            'tab.c',
-            'wcs.c',
-            'wcserr.c',
-            'wcsfix.c',
-            'wcshdr.c',
-            'wcsprintf.c',
-            'wcsunits.c',
-            'wcsutil.c']
         cfg['sources'].extend(join(wcslib_cpath, x) for x in wcslib_files)
         cfg['include_dirs'].append(wcslib_cpath)
-    else:
-        cfg.update(setup_helpers.pkg_config(['wcslib'], ['wcs']))
-
-    astropy_wcs_files = [  # List of astropy.wcs files to compile
-        'distortion.c',
-        'distortion_wrap.c',
-        'docstrings.c',
-        'pipeline.c',
-        'pyutil.c',
-        'astropy_wcs.c',
-        'astropy_wcs_api.c',
-        'sip.c',
-        'sip_wrap.c',
-        'str_list_proxy.c',
-        'unit_list_proxy.c',
-        'util.c',
-        'wcslib_wrap.c',
-        'wcslib_tabprm_wrap.c',
-        'wcslib_units_wrap.c',
-        'wcslib_wtbarr_wrap.c']
-    cfg['sources'].extend(join(WCSROOT, 'src', x) for x in astropy_wcs_files)
 
     if debug:
         cfg['define_macros'].append(('DEBUG', None))
         cfg['undef_macros'].append('NDEBUG')
         if (not sys.platform.startswith('sun') and
-            not sys.platform == 'win32'):
+                not sys.platform == 'win32'):
             cfg['extra_compile_args'].extend(["-fno-inline", "-O0", "-g"])
     else:
         # Define ECHO as nothing to prevent spurious newlines from
@@ -293,20 +227,102 @@ def get_extensions():
     if sys.platform.startswith('linux'):
         cfg['define_macros'].append(('HAVE_SINCOS', None))
 
+    # Squelch a few compilation warnings in WCSLIB
+    if get_compiler() in ('unix', 'mingw32'):
+        if not debug:
+            cfg['extra_compile_args'].extend([
+                '-Wno-strict-prototypes',
+                '-Wno-unused-function',
+                '-Wno-unused-value',
+                '-Wno-uninitialized'])
+
+
+def get_extensions():
+    generate_c_docstrings()
+
+    ######################################################################
+    # DISTUTILS SETUP
+    cfg = defaultdict(list)
+
+    wcslib_files = [  # List of wcslib files to compile
+        'flexed/wcsbth.c',
+        'flexed/wcspih.c',
+        'flexed/wcsulex.c',
+        'flexed/wcsutrn.c',
+        'cel.c',
+        'dis.c',
+        'lin.c',
+        'log.c',
+        'prj.c',
+        'spc.c',
+        'sph.c',
+        'spx.c',
+        'tab.c',
+        'wcs.c',
+        'wcserr.c',
+        'wcsfix.c',
+        'wcshdr.c',
+        'wcsprintf.c',
+        'wcsunits.c',
+        'wcsutil.c'
+    ]
+
+    wcslib_config_paths = [
+        join(WCSROOT, 'include', 'astropy_wcs', 'wcsconfig.h'),
+        join(WCSROOT, 'include', 'wcsconfig.h')
+    ]
+
+    get_wcslib_cfg(cfg, wcslib_files, wcslib_config_paths)
+
+    cfg['include_dirs'].append(join(WCSROOT, "include"))
+
+    astropy_wcs_files = [  # List of astropy.wcs files to compile
+        'distortion.c',
+        'distortion_wrap.c',
+        'docstrings.c',
+        'pipeline.c',
+        'pyutil.c',
+        'astropy_wcs.c',
+        'astropy_wcs_api.c',
+        'sip.c',
+        'sip_wrap.c',
+        'str_list_proxy.c',
+        'unit_list_proxy.c',
+        'util.c',
+        'wcslib_wrap.c',
+        'wcslib_auxprm_wrap.c',
+        'wcslib_tabprm_wrap.c',
+        'wcslib_wtbarr_wrap.c'
+    ]
+    cfg['sources'].extend(join(WCSROOT, 'src', x) for x in astropy_wcs_files)
+
+    cfg['sources'] = [str(x) for x in cfg['sources']]
+    cfg = dict((str(key), val) for key, val in cfg.items())
+
+    # Copy over header files from WCSLIB into the installed version of Astropy
+    # so that other Python packages can write extensions that link to it. We
+    # do the copying here then include the data in [options.package_data] in
+    # the setup.cfg file
+
+    wcslib_headers = [
+        'cel.h',
+        'lin.h',
+        'prj.h',
+        'spc.h',
+        'spx.h',
+        'tab.h',
+        'wcs.h',
+        'wcserr.h',
+        'wcsmath.h',
+        'wcsprintf.h',
+    ]
+
+    if not (int(os.environ.get('ASTROPY_USE_SYSTEM_WCSLIB', 0))
+            or int(os.environ.get('ASTROPY_USE_SYSTEM_ALL', 0))):
+        for header in wcslib_headers:
+            source = join('cextern', 'wcslib', 'C', header)
+            dest = join('astropy', 'wcs', 'include', 'wcslib', header)
+            if newer_group([source], dest, 'newer'):
+                shutil.copy(source, dest)
+
     return [Extension('astropy.wcs._wcs', **cfg)]
-
-
-def get_package_data():
-    # Installs the testing data files
-    return {
-        'astropy.wcs.tests': ['data/*.hdr', 'data/*.fits',
-                              'maps/*.hdr', 'spectra/*.hdr'],
-        'astropy.wcs': ['include/*.h']}
-
-
-def get_legacy_alias():
-    return setup_helpers.add_legacy_alias('pywcs', 'astropy.wcs', '1.11')
-
-
-def get_external_libraries():
-    return ['wcslib']

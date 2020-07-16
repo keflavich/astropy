@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,7 +22,7 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: wcsutrn.l,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: wcsutrn.l,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *=============================================================================
 *
 * wcsutrn.l is a Flex description file containing the definition of a lexical
@@ -38,18 +38,16 @@
 /* Options. */
 %option full
 %option never-interactive
+%option noinput
 %option noyywrap
 %option outfile="wcsutrn.c"
 %option prefix="wcsutrn"
+%option reentrant
 
 /* Exclusive start states. */
 %x NEXT FLUSH
 
 %{
-/* To get the prototype for fileno() from stdio.h when gcc is invoked with
- * -std=c89 (same as -ansi) or -std=c99 since we do not define YY_INPUT. */
-#define _POSIX_SOURCE 1
-
 #include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -58,7 +56,36 @@
 #include "wcserr.h"
 #include "wcsunits.h"
 
-#define YY_DECL int wcsutrne(int ctrl, char unitstr[], struct wcserr **err)
+static int wcsutrne_scanner(int ctrl, char unitstr[], struct wcserr **err,
+                            yyscan_t yyscanner);
+
+/*--------------------------------------------------------------------------*/
+
+int wcsutrne(
+  int ctrl,
+  char unitstr[],
+  struct wcserr **err)
+
+{
+  int status;
+  yyscan_t yyscanner;
+  int yylex_init(yyscan_t *yyscanner);
+  int yylex_destroy(yyscan_t yyscanner);
+
+  yylex_init(&yyscanner);
+  status = wcsutrne_scanner(ctrl, unitstr, err, yyscanner);
+  yylex_destroy(yyscanner);
+
+  return status;
+}
+
+/*--------------------------------------------------------------------------*/
+
+#define YY_DECL int wcsutrne_scanner(int ctrl, char unitstr[], \
+ struct wcserr **err, yyscan_t yyscanner)
+
+/* Dummy definition to circumvent compiler warnings. */
+#define YY_INPUT(inbuff, count, bufsize) { count = YY_NULL; }
 
 /* Used in preempting the call to exit() by yy_fatal_error(). */
 jmp_buf wcsutrn_abort_jmp_env;
@@ -73,15 +100,14 @@ jmp_buf wcsutrn_abort_jmp_env;
 	int bracket = 0;
 	int unsafe  = 0;
 	int status  = -1;
-	YY_BUFFER_STATE inbuff;
-	int yylex_destroy(void);
 	
 	if (err) *err = 0x0;
 	
 	*orig = '\0';
 	*subs = '\0';
 	
-	inbuff = yy_scan_string(unitstr);
+	yy_delete_buffer(YY_CURRENT_BUFFER, yyscanner);
+	yy_scan_string(unitstr, yyscanner);
 	*unitstr = '\0';
 	
 	/* Return here via longjmp() invoked by yy_fatal_error(). */
@@ -155,7 +181,7 @@ D	{
 	  BEGIN(NEXT);
 	}
 
-degrees?|DEG|DEGREES? {
+degrees?|Deg|Degrees?|DEG|DEGREES? {
 	  strcpy(orig, yytext);
 	  strcpy(subs, "deg");
 	  BEGIN(NEXT);
@@ -326,7 +352,6 @@ years?|YR|YEARS? {
 	    if (strcmp(orig, subs)) status = 0;
 	  }
 	
-	  yylex_destroy();
 	  if (unsafe) {
 	    return wcserr_set(WCSERR_SET(UNITSERR_UNSAFE_TRANS),
 	      "Unsafe unit translation in '%s'", unitstr);

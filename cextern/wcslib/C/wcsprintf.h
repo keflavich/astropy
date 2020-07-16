@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,20 +22,22 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: wcsprintf.h,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: wcsprintf.h,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *=============================================================================
 *
-* WCSLIB 4.17 - C routines that implement the FITS World Coordinate System
-* (WCS) standard.
+* WCSLIB 7.3 - C routines that implement the FITS World Coordinate System
+* (WCS) standard.  Refer to the README file provided with WCSLIB for an
+* overview of the library.
+*
 *
 * Summary of the wcsprintf routines
 * ---------------------------------
-* These routines allow diagnostic output from celprt(), linprt(), prjprt(),
-* spcprt(), tabprt(), wcsprt(), and wcserr_prt() to be redirected to a file or
-* captured in a string buffer.  Those routines all use wcsprintf() for output.
-* Likewise wcsfprintf() is used by wcsbth() and wcspih().  Both functions may
-* be used by application programmers to have other output go to the same
-* place.
+* Routines in this suite allow diagnostic output from celprt(), linprt(),
+* prjprt(), spcprt(), tabprt(), wcsprt(), and wcserr_prt() to be redirected to
+* a file or captured in a string buffer.  Those routines all use wcsprintf()
+* for output.  Likewise wcsfprintf() is used by wcsbth() and wcspih().  Both
+* functions may be used by application programmers to have other output go to
+* the same place.
 *
 *
 * wcsprintf() - Print function used by WCSLIB diagnostic routines
@@ -125,6 +127,7 @@
 #ifndef WCSLIB_WCSPRINTF
 #define WCSLIB_WCSPRINTF
 
+#include <inttypes.h>
 #include <stdio.h>
 
 #ifdef __cplusplus
@@ -133,7 +136,7 @@ extern "C" {
 
 #define WCSPRINTF_PTR(str1, ptr, str2) \
   if (ptr) { \
-    wcsprintf("%s%#lx%s", (str1), (unsigned long)(ptr), (str2)); \
+    wcsprintf("%s%#" PRIxPTR "%s", (str1), (uintptr_t)(ptr), (str2)); \
   } else { \
     wcsprintf("%s0x0%s", (str1), (str2)); \
   }

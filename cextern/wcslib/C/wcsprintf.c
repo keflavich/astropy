@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,7 +22,7 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: wcsprintf.c,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: wcsprintf.c,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *===========================================================================*/
 
 #include <stdarg.h>
@@ -39,6 +39,7 @@ static size_t wcsprintf_size = 0;
 /*--------------------------------------------------------------------------*/
 
 int wcsprintf_set(FILE *wcsout)
+
 {
   if (wcsout != 0x0) {
     /* Output to file. */
@@ -52,6 +53,8 @@ int wcsprintf_set(FILE *wcsout)
 
   } else {
     /* Output to buffer. */
+    wcsprintf_file = 0x0;
+
     if (wcsprintf_buff == 0x0) {
       /* Allocate a buffer. */
       wcsprintf_buff = malloc(1024);
@@ -72,6 +75,7 @@ int wcsprintf_set(FILE *wcsout)
 /*--------------------------------------------------------------------------*/
 
 const char *wcsprintf_buf(void)
+
 {
   return wcsprintf_buff;
 }
@@ -79,7 +83,9 @@ const char *wcsprintf_buf(void)
 /*--------------------------------------------------------------------------*/
 
 int wcsprintf(const char *format, ...)
+
 {
+  char *realloc_buff;
   int  nbytes;
   size_t  used;
   va_list arg_list;
@@ -101,10 +107,13 @@ int wcsprintf(const char *format, ...)
     if (wcsprintf_size - used < 128) {
       /* Expand the buffer. */
       wcsprintf_size += 1024;
-      wcsprintf_buff = realloc(wcsprintf_buff, wcsprintf_size);
-      if (wcsprintf_buff == NULL) {
+      realloc_buff = realloc(wcsprintf_buff, wcsprintf_size);
+      if (realloc_buff == NULL) {
+        free(wcsprintf_buff);
+        wcsprintf_buff = 0x0;
         return 1;
       }
+      wcsprintf_buff = realloc_buff;
       wcsprintf_bufp = wcsprintf_buff + used;
     }
 
@@ -120,7 +129,9 @@ int wcsprintf(const char *format, ...)
 /*--------------------------------------------------------------------------*/
 
 int wcsfprintf(FILE *stream, const char *format, ...)
+
 {
+  char *realloc_buff;
   int  nbytes;
   size_t  used;
   va_list arg_list;
@@ -142,10 +153,13 @@ int wcsfprintf(FILE *stream, const char *format, ...)
     if (wcsprintf_size - used < 128) {
       /* Expand the buffer. */
       wcsprintf_size += 1024;
-      wcsprintf_buff = realloc(wcsprintf_buff, wcsprintf_size);
-      if (wcsprintf_buff == NULL) {
+      realloc_buff = realloc(wcsprintf_buff, wcsprintf_size);
+      if (realloc_buff == NULL) {
+        free(wcsprintf_buff);
+        wcsprintf_buff = 0x0;
         return 1;
       }
+      wcsprintf_buff = realloc_buff;
       wcsprintf_bufp = wcsprintf_buff + used;
     }
 

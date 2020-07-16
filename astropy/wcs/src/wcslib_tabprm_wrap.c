@@ -5,7 +5,7 @@
 
 #define NO_IMPORT_ARRAY
 
-#include "wcslib_tabprm_wrap.h"
+#include "astropy_wcs/wcslib_tabprm_wrap.h"
 
 #include <wcs.h>
 #include <wcsprintf.h>
@@ -17,7 +17,7 @@
  docstrings are written in doc/docstrings.py, which are then converted
  by setup.py into docstrings.h, which we include here.
 */
-#include "docstrings.h"
+#include "astropy_wcs/docstrings.h"
 
 /***************************************************************************
  * Helper functions                                                        *
@@ -69,24 +69,15 @@ wcslib_tab_to_python_exc(int status) {
 static int
 PyTabprm_traverse(
     PyTabprm* self, visitproc visit, void *arg) {
-  int vret;
-
-  vret = visit(self->owner, arg);
-  if (vret != 0) {
-    return vret;
-  }
-
+  Py_VISIT(self->owner);
   return 0;
 }
 
 static int
 PyTabprm_clear(
     PyTabprm* self) {
-  PyObject* tmp;
 
-  tmp = self->owner;
-  self->owner = NULL;
-  Py_XDECREF(tmp);
+  Py_CLEAR(self->owner);
 
   return 0;
 }
@@ -103,6 +94,7 @@ PyTabprm*
 PyTabprm_cnew(PyObject* wcsprm, struct tabprm* x) {
   PyTabprm* self;
   self = (PyTabprm*)(&PyTabprmType)->tp_alloc(&PyTabprmType, 0);
+  if (self == NULL) return NULL;
   self->x = x;
   Py_INCREF(wcsprm);
   self->owner = wcsprm;
@@ -133,8 +125,7 @@ PyTabprm_set(
     return NULL;
   }
 
-  Py_INCREF(Py_None);
-  return Py_None;
+  Py_RETURN_NONE;
 }
 
 /*@null@*/ static PyObject*
@@ -148,13 +139,10 @@ PyTabprm_print_contents(
   /* This is not thread-safe, but since we're holding onto the GIL,
      we can assume we won't have thread conflicts */
   wcsprintf_set(NULL);
-
   tabprt(self->x);
-
   printf("%s", wcsprintf_buf());
-
-  Py_INCREF(Py_None);
-  return Py_None;
+  fflush(stdout);
+  Py_RETURN_NONE;
 }
 
 /*@null@*/ static PyObject*
@@ -171,11 +159,7 @@ PyTabprm___str__(
 
   tabprt(self->x);
 
-  #if PY3K
   return PyUnicode_FromString(wcsprintf_buf());
-  #else
-  return PyString_FromString(wcsprintf_buf());
-  #endif
 }
 
 /***************************************************************************
@@ -417,12 +401,7 @@ static PyMethodDef PyTabprm_methods[] = {
 };
 
 PyTypeObject PyTabprmType = {
-  #if PY3K
   PyVarObject_HEAD_INIT(NULL, 0)
-  #else
-  PyObject_HEAD_INIT(NULL)
-  0,                            /*ob_size*/
-  #endif
   "astropy.wcs.Tabprm",         /*tp_name*/
   sizeof(PyTabprm),             /*tp_basicsize*/
   0,                            /*tp_itemsize*/
@@ -431,7 +410,7 @@ PyTypeObject PyTabprmType = {
   0,                            /*tp_getattr*/
   0,                            /*tp_setattr*/
   0,                            /*tp_compare*/
-  (reprfunc)PyTabprm___str__,   /*tp_repr*/
+  0,                            /*tp_repr*/
   0,                            /*tp_as_number*/
   0,                            /*tp_as_sequence*/
   0,                            /*tp_as_mapping*/

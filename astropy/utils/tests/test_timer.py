@@ -7,62 +7,82 @@
     performance is machine-dependent.
 
 """
+
 # STDLIB
 import time
 
+# THIRD-PARTY
+import pytest
+import numpy as np
+
 # LOCAL
-from ..timer import RunTimePredictor
+from astropy.modeling.fitting import ModelsError
 
 
 def func_to_time(x):
-    """This is sleeps for x seconds for timing tests."""
-    time.sleep(x)
-    return 'Slept for {0} second(s)'.format(x)
+    """This sleeps for y seconds for use with timing tests.
+
+    .. math::
+
+        y = 5 * x - 10
+
+    """
+    y = 5.0 * np.asarray(x) - 10
+    time.sleep(y)
+    return y
 
 
-class TestRunTimePredictor(object):
-    """Test `astropy.utils.timer.RunTimePredictor`."""
-    def setup_class(self):
-        self.p = RunTimePredictor(func_to_time)
+@pytest.mark.filterwarnings("ignore")
+def test_timer():
+    """Test function timer."""
+    from astropy.utils.timer import RunTimePredictor
+    p = RunTimePredictor(func_to_time)
 
-    def test_expected_errors(self):
-        try:
-            self.p.do_fit()
-        except AssertionError as e:
-            assert str(e) == 'Requires 3 points but has 0'
+    # --- These must run before data points are introduced. ---
 
-        try:
-            self.p.predict_time(100)
-        except AssertionError as e:
-            assert str(e) == 'No fitted data for prediction'
+    with pytest.raises(ValueError):
+        p.do_fit()
 
-    def test_baseline(self):
-        self.p.time_func([0.1, 0.2, 0.5, 'a', 1.5])
-        self.p.time_func(1.0)
+    with pytest.raises(RuntimeError):
+        p.predict_time(100)
 
-        assert self.p._funcname == 'func_to_time'
-        assert self.p._cache_bad == ['a']
-        assert self.p.results == {0.1: 'Slept for 0.1 second(s)',
-                                  0.2: 'Slept for 0.2 second(s)',
-                                  0.5: 'Slept for 0.5 second(s)',
-                                  1.5: 'Slept for 1.5 second(s)',
-                                  1.0: 'Slept for 1.0 second(s)'}
+    # --- These must run next to set up data points. ---
 
-    def test_fitting(self):
-        a = self.p.do_fit()
-        assert self.p._power == 1
+    p.time_func([2.02, 2.04, 2.1, 'a', 2.3])
+    p.time_func(2.2)  # Test OrderedDict
 
-        # Perfect slope is 1, with 10% uncertainty
-        assert 0.9 <= a[0] <= 1.1
+    assert p._funcname == 'func_to_time'
+    assert p._cache_bad == ['a']
 
-        # Perfect intercept is 0, with 1-sec uncertainty
-        assert -1 <= a[1] <= 1
+    k = list(p.results.keys())
+    v = list(p.results.values())
+    np.testing.assert_array_equal(k, [2.02, 2.04, 2.1, 2.3, 2.2])
+    np.testing.assert_allclose(v, [0.1, 0.2, 0.5, 1.5, 1.0])
 
-    def test_prediction(self):
-        # Perfect answer is 100, with 10% uncertainty
-        t = self.p.predict_time(100)
-        assert 90 <= t <= 110
+    # --- These should only run once baseline is established. ---
 
-        # Repeated call to access cached run time
-        t2 = self.p.predict_time(100)
-        assert t == t2
+    with pytest.raises(ModelsError):
+        a = p.do_fit(model='foo')
+
+    with pytest.raises(ModelsError):
+        a = p.do_fit(fitter='foo')
+
+    a = p.do_fit()
+
+    assert p._power == 1
+
+    # Perfect slope is 5, with 10% uncertainty
+    assert 4.5 <= a[1] <= 5.5
+
+    # Perfect intercept is -10, with 1-sec uncertainty
+    assert -11 <= a[0] <= -9
+
+    # --- These should only run once fitting is completed. ---
+
+    # Perfect answer is 490, with 10% uncertainty
+    t = p.predict_time(100)
+    assert 441 <= t <= 539
+
+    # Repeated call to access cached run time
+    t2 = p.predict_time(100)
+    assert t == t2

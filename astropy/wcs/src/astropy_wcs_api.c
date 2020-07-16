@@ -1,6 +1,6 @@
 #define NO_IMPORT_ARRAY
 
-#include "astropy_wcs_api.h"
+#include "astropy_wcs/astropy_wcs_api.h"
 
 int
 AstropyWcs_GetCVersion(void) {
@@ -45,11 +45,7 @@ void* AstropyWcs_API[] = {
 int _setup_api(PyObject *m) {
   PyObject* c_api;
 
-  #if PY_VERSION_HEX >= 0x03020000
-    c_api = PyCapsule_New((void *)AstropyWcs_API, "_wcs._ASTROPY_WCS_API", NULL);
-  #else
-    c_api = PyCObject_FromVoidPtr((void *)AstropyWcs_API, NULL);
-  #endif
+  c_api = PyCapsule_New((void *)AstropyWcs_API, "_wcs._ASTROPY_WCS_API", NULL);
   PyModule_AddObject(m, "_ASTROPY_WCS_API", c_api);
 
   return 0;

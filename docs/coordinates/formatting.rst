@@ -1,23 +1,46 @@
 Formatting Coordinate Strings
------------------------------
+*****************************
 
-Getting a string representation of a coordinate is best approached by
-treating the components (e.g., RA and Dec) separately.  For example::
+.. todo: @taldcroft should change this to start with a discussion of SkyCoord's capabilities
 
-  >>> from astropy.coordinates import ICRSCoordinates
-  >>> c = ICRSCoordinates(187.70592, 12.39112, unit=(u.degree, u.degree))
+Getting a string representation of a coordinate is most powerfully
+approached by treating the components (e.g., RA and Dec) separately.
+
+Examples
+--------
+
+..
+  EXAMPLE START
+  Getting and Formatting String Representations of Coordinates
+
+To get the string representation of a coordinate::
+
+  >>> from astropy.coordinates import ICRS
+  >>> from astropy import units as u
+  >>> c = ICRS(187.70592*u.degree, 12.39112*u.degree)
   >>> str(c.ra) + ' ' + str(c.dec)
-  '187d42m21.31200s 12d23m28.03200s'
+  '187d42m21.312s 12d23m28.032s'
 
-To get better control over the formatting, you can use the angles' 
-`~astropy.coordinates.angle.Angle.format` method (see :doc:`angles` for
-more).  For example::
+To get better control over the formatting, you can use the angles'
+:meth:`~astropy.coordinates.Angle.to_string` method (see :doc:`angles` for
+more). For example::
 
-  >>> rahmsstr = c.ra.format(u.hour)
-  >>>> rahmsstr
-  '12h30m49.42080s'
-  >>> decdmsstr = c.dec.format(u.degree, alwayssign=True)
-  >>> decdmsstr
-  '+12d23m28.03200s'
+  >>> rahmsstr = c.ra.to_string(u.hour)
+  >>> str(rahmsstr)
+  '12h30m49.4208s'
+  >>> decdmsstr = c.dec.to_string(u.degree, alwayssign=True)
+  >>> str(decdmsstr)
+  '+12d23m28.032s'
   >>> rahmsstr + ' ' + decdmsstr
-  '12h30m49.42080s +12d23m28.03200s'
+  u'12h30m49.4208s +12d23m28.032s'
+
+You can also use Python's `format` string method to create more complex
+string expressions, such as IAU-style coordinates or even full sentences::
+
+  >>> 'SDSS J{0}{1}'.format(c.ra.to_string(unit=u.hourangle, sep='', precision=2, pad=True), c.dec.to_string(sep='', precision=2, alwayssign=True, pad=True))
+  'SDSS J123049.42+122328.03'
+  >>> 'The galaxy M87, at an RA of {0.ra.hour:.2f} hours and Dec of {0.dec.deg:.1f} degrees, has an impressive jet.'.format(c)
+  'The galaxy M87, at an RA of 12.51 hours and Dec of 12.4 degrees, has an impressive jet.'
+
+..
+  EXAMPLE END

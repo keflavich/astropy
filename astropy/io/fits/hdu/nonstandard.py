@@ -3,13 +3,13 @@
 import gzip
 import io
 
-from ..file import _File
+from astropy.io.fits.file import _File
 from .base import NonstandardExtHDU
 from .hdulist import HDUList
-from ..header import Header
-from ..util import fileobj_name
+from astropy.io.fits.header import Header, _pad_length
+from astropy.io.fits.util import fileobj_name
 
-from ....utils import lazyproperty
+from astropy.utils import lazyproperty
 
 
 class FitsHDU(NonstandardExtHDU):
@@ -26,7 +26,7 @@ class FitsHDU(NonstandardExtHDU):
 
     @lazyproperty
     def hdulist(self):
-        self._file.seek(self._datLoc)
+        self._file.seek(self._data_offset)
         fileobj = io.BytesIO()
         # Read the data into a BytesIO--reading directly from the file
         # won't work (at least for gzipped files) due to problems deep
@@ -48,11 +48,12 @@ class FitsHDU(NonstandardExtHDU):
         ----------
         filename : str
             The path to the file to read into a FitsHDU
-        compress : bool (optional)
+        compress : bool, optional
             Gzip compress the FITS file
         """
 
-        return cls.fromhdulist(HDUList(filename), compress=compress)
+        with HDUList.fromfile(filename) as hdulist:
+            return cls.fromhdulist(hdulist, compress=compress)
 
     @classmethod
     def fromhdulist(cls, hdulist, compress=False):
@@ -63,7 +64,7 @@ class FitsHDU(NonstandardExtHDU):
         ----------
         hdulist : HDUList
             A valid Headerlet object.
-        compress : bool (optional)
+        compress : bool, optional
             Gzip compress the FITS file
         """
 
@@ -74,36 +75,38 @@ class FitsHDU(NonstandardExtHDU):
             else:
                 name = None
             fileobj = gzip.GzipFile(name, mode='wb', fileobj=bs)
+
         hdulist.writeto(fileobj)
+
         if compress:
             fileobj.close()
+
+        # A proper HDUList should still be padded out to a multiple of 2880
+        # technically speaking
+        padding = (_pad_length(bs.tell()) * cls._padding_byte).encode('ascii')
+        bs.write(padding)
+
         bs.seek(0)
 
         cards = [
-            ('XTENSION',  cls._extension, 'FITS extension'),
-            ('BITPIX',    8, 'array data type'),
-            ('NAXIS',     1, 'number of array dimensions'),
-            ('NAXIS1',    len(bs.getvalue()), 'Axis length'),
-            ('PCOUNT',    0, 'number of parameters'),
-            ('GCOUNT',    1, 'number of groups'),
+            ('XTENSION', cls._extension, 'FITS extension'),
+            ('BITPIX', 8, 'array data type'),
+            ('NAXIS', 1, 'number of array dimensions'),
+            ('NAXIS1', len(bs.getvalue()), 'Axis length'),
+            ('PCOUNT', 0, 'number of parameters'),
+            ('GCOUNT', 1, 'number of groups'),
         ]
 
         # Add the XINDn keywords proposed by Perry, though nothing is done with
         # these at the moment
         if len(hdulist) > 1:
             for idx, hdu in enumerate(hdulist[1:]):
-                cards.append(('XIND' + str(idx + 1), hdu._hdrLoc,
-                              'byte offset of extension %d' % (idx + 1)))
+                cards.append(('XIND' + str(idx + 1), hdu._header_offset,
+                              'byte offset of extension {}'.format(idx + 1)))
 
-        cards.append(('COMPRESS',  compress, 'Uses gzip compression'))
+        cards.append(('COMPRESS', compress, 'Uses gzip compression'))
         header = Header(cards)
-        # TODO: This wrapping of the fileobj should probably be handled by
-        # cls.fromstring, though cls.fromstring itself has a strange
-        # implementation that I probably need to fix.  For example, it
-        # shouldn't care about fileobjs.  There should be a _BaseHDU.fromfile
-        # for that (there is _BaseHDU.readfrom which plays that role, but its
-        # semantics are also a little unclear...)
-        return cls.fromstring(header, fileobj=_File(bs))
+        return cls._readfrom_internal(_File(bs), header=header)
 
     @classmethod
     def match_header(cls, header):
@@ -111,7 +114,7 @@ class FitsHDU(NonstandardExtHDU):
         if card.keyword != 'XTENSION':
             return False
         xtension = card.value
-        if isinstance(xtension, basestring):
+        if isinstance(xtension, str):
             xtension = xtension.rstrip()
         return xtension == cls._extension
 
@@ -119,4 +122,4 @@ class FitsHDU(NonstandardExtHDU):
 
     def _summary(self):
         # TODO: Perhaps make this more descriptive...
-        return (self.name, self.__class__.__name__, len(self._header))
+        return (self.name, self.ver, self.__class__.__name__, len(self._header))

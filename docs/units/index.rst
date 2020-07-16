@@ -1,76 +1,176 @@
 .. _astropy-units:
 
-***********************
-Units (`astropy.units`)
-***********************
+**************************************
+Units and Quantities (`astropy.units`)
+**************************************
+
+.. |Quantity| replace:: :class:`~astropy.units.Quantity`
 
 .. currentmodule:: astropy.units
 
 Introduction
 ============
 
-``astropy.units`` handles defining and converting between physical
-units, and performing arithmetic with physical quantities (numbers
-with associated units).
+`astropy.units` handles defining, converting between, and performing
+arithmetic with physical quantities, such as meters, seconds, Hz,
+etc. It also handles logarithmic units such as magnitude and decibel.
+
+`astropy.units` does not know spherical geometry or sexagesimal
+(hours, min, sec): if you want to deal with celestial coordinates,
+see the `astropy.coordinates` package.
 
 Getting Started
 ===============
 
-  >>> from astropy import units as u
-  >>> # Convert from parsec to meter
-  >>> u.pc.to(u.m)
-  30856775814671916.0
-  >>> cms = u.cm / u.s
-  >>> mph = u.mile / u.hour
-  >>> cms.to(mph, 1)
-  0.02236936292054402
-  >>> cms.to(mph, [1., 1000., 5000.])
-  array([  2.23693629e-02,   2.23693629e+01,   1.11846815e+02])
+Most users of the `astropy.units` package will work with :ref:`Quantity objects
+<quantity>`: the combination of a value and a unit. The most convenient way to
+create a |Quantity| is to multiply or divide a value by one of the built-in
+units. It works with scalars, sequences, and ``numpy`` arrays.
+
+Examples
+--------
+
+.. EXAMPLE START: Creating and Combining Quantities with Units
+
+To create a |Quantity| object::
+
+    >>> from astropy import units as u
+    >>> 42.0 * u.meter  # doctest: +FLOAT_CMP
+    <Quantity  42. m>
+    >>> [1., 2., 3.] * u.m  # doctest: +FLOAT_CMP
+    <Quantity [1., 2., 3.] m>
+    >>> import numpy as np
+    >>> np.array([1., 2., 3.]) * u.m  # doctest: +FLOAT_CMP
+    <Quantity [1., 2., 3.] m>
+
+You can get the unit and value from a |Quantity| using the unit and
+value members::
+
+    >>> q = 42.0 * u.meter
+    >>> q.value
+    42.0
+    >>> q.unit
+    Unit("m")
+
+From this basic building block, it is possible to start combining
+quantities with different units::
+
+    >>> 15.1 * u.meter / (32.0 * u.second)  # doctest: +FLOAT_CMP
+    <Quantity 0.471875 m / s>
+    >>> 3.0 * u.kilometer / (130.51 * u.meter / u.second)  # doctest: +FLOAT_CMP
+    <Quantity 0.022986744310780783 km s / m>
+    >>> (3.0 * u.kilometer / (130.51 * u.meter / u.second)).decompose()  # doctest: +FLOAT_CMP
+    <Quantity 22.986744310780782 s>
+
+Unit conversion is done using the
+:meth:`~astropy.units.quantity.Quantity.to` method, which returns a new
+|Quantity| in the given unit::
+
+    >>> x = 1.0 * u.parsec
+    >>> x.to(u.km)  # doctest: +FLOAT_CMP
+    <Quantity 30856775814671.914 km>
+
+.. EXAMPLE END
+
+.. EXAMPLE START: Creating Custom Units for Quantity Objects
+
+It is also possible to work directly with units at a lower level, for
+example, to create custom units::
+
+    >>> from astropy.units import imperial
+
+    >>> cms = u.cm / u.s
+    >>> # ...and then use some imperial units
+    >>> mph = imperial.mile / u.hour
+
+    >>> # And do some conversions
+    >>> q = 42.0 * cms
+    >>> q.to(mph)  # doctest: +FLOAT_CMP
+    <Quantity 0.939513242662849 mi / h>
 
 Units that "cancel out" become a special unit called the
 "dimensionless unit":
 
-  >>> u.m / u.m
-  Unit(dimensionless)
+    >>> u.m / u.m
+    Unit(dimensionless)
 
-`astropy` is able to match compound units against the units it already
+To create a basic :ref:`dimensionless quantity <doc_dimensionless_unit>`,
+multiply a value by the unscaled dimensionless unit::
+
+    >>> q = 1.0 * u.dimensionless_unscaled
+    >>> q.unit
+    Unit(dimensionless)
+
+.. EXAMPLE END
+
+.. EXAMPLE START: Matching and Converting Between Units
+
+`astropy.units` is able to match compound units against the units it already
 knows about::
 
-  >>> (u.s ** -1).compose()
-  [Unit("Hz"), ...]
+    >>> (u.s ** -1).compose()  # doctest: +SKIP
+    [Unit("Bq"), Unit("Hz"), Unit("3.7e+10 Ci")]
 
-And it can convert between unit systems::
+And it can convert between unit systems, such as SI or CGS:
 
-  >>> u.Pa.to_system(u.cgs)
-  [Unit("10 Ba")]
+.. doctest-skip::
 
-`astropy.units` also handles equivalencies, such as that between wavelength
-and frequency. To use that feature, equivalence objects are passed to the
-:meth:`~astropy.units.core.UnitBase.to` conversion method. For instance, a
-conversion from wavelength to frequency doesn't normally work:
+    >>> (1.0 * u.Pa).cgs
+    <Quantity 10.0 Ba>
 
-  >>> u.nm.to(u.Hz, [1000, 2000])
-  UnitsException: 'nm' (length) and 'Hz' (frequency) are not convertible
+The units ``mag``, ``dex``, and ``dB`` are special, being :ref:`logarithmic
+units <logarithmic_units>`, for which a value is the logarithm of a physical
+quantity in a given unit. These can be used with a physical unit in
+parentheses to create a corresponding logarithmic quantity::
 
-but by passing an equivalency list, in this case ``spectral()``, it does:
+    >>> -2.5 * u.mag(u.ct / u.s)
+    <Magnitude -2.5 mag(ct / s)>
+    >>> from astropy import constants as c
+    >>> u.Dex((c.G * u.M_sun / u.R_sun**2).cgs)  # doctest: +FLOAT_CMP
+    <Dex 4.438067627303133 dex(cm / s2)>
 
-  >>> u.nm.to(u.Hz, [1000, 2000], equivalencies=u.spectral())
-  array([  2.99792458e+14,   1.49896229e+14])
-  >>> u.nm.to(u.eV, [1000, 2000], equivalencies=u.spectral())
-  array([ 1.23984201,  0.61992101])
+`astropy.units` also handles :ref:`equivalencies <unit_equivalencies>`, such as
+that between wavelength and frequency. To use that feature, equivalence objects
+are passed to the :meth:`~astropy.units.quantity.Quantity.to` conversion
+method. For instance, a conversion from wavelength to frequency does not
+normally work:
 
-Also included in the `astropy.units` package is the
-:class:`~astropy.units.quantity.Quantity` object, which represents a numerical
-value with an associated unit. These objects support arithmetic with other
-numbers and :class:`~astropy.units.quantity.Quantity` objects and preserve
-their units::
+    >>> (1000 * u.nm).to(u.Hz)  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+      ...
+    UnitConversionError: 'nm' (length) and 'Hz' (frequency) are not convertible
 
-   >>> 15.1 * u.meter / (32.0 * u.second)
-   <Quantity 0.471875 m / s>
-   >>> 3.0 * u.kilometer / (130.51 * u.meter / u.second)
-   <Quantity 0.0229867443108 km s / m>
-   >>> (3.0 * u.kilometer / (130.51 * u.meter / u.second)).decompose()
-   <Quantity 22.9867443108 s>
+But by passing an equivalency list, in this case ``spectral()``, it does:
+
+    >>> (1000 * u.nm).to(u.Hz, equivalencies=u.spectral())  # doctest: +FLOAT_CMP
+    <Quantity  2.99792458e+14 Hz>
+
+.. EXAMPLE END
+
+.. EXAMPLE START: Printing Quantities and Units to Strings
+
+Quantities and units can be :ref:`printed nicely to strings
+<astropy-units-format>` using the `Format String Syntax
+<https://docs.python.org/3/library/string.html#format-string-syntax>`_. Format
+specifiers (like ``0.03f``) in strings will be used to format the quantity
+value::
+
+    >>> q = 15.1 * u.meter / (32.0 * u.second)
+    >>> q  # doctest: +FLOAT_CMP
+    <Quantity 0.471875 m / s>
+    >>> f"{q:0.03f}"
+    '0.472 m / s'
+
+The value and unit can also be formatted separately. Format specifiers
+for units can be used to choose the unit formatter::
+
+    >>> q = 15.1 * u.meter / (32.0 * u.second)
+    >>> q  # doctest: +FLOAT_CMP
+    <Quantity 0.471875 m / s>
+    >>> f"{q.value:0.03f} {q.unit:FITS}"
+    '0.472 m s-1'
+
+.. EXAMPLE END
 
 Using `astropy.units`
 =====================
@@ -78,40 +178,57 @@ Using `astropy.units`
 .. toctree::
    :maxdepth: 2
 
+   quantity
    standard_units
    combining_and_defining
    decomposing_and_composing
-   conversion
+   logarithmic_units
    format
    equivalencies
-   quantity
+   constants_versions
+   conversion
+
+Acknowledgments
+===============
+
+This code was originally based on the `pynbody
+<https://github.com/pynbody/pynbody>`__ units module written by Andrew
+Pontzen, who has granted the Astropy Project permission to use the code
+under a BSD license.
 
 See Also
 ========
 
-- `FITS Standard <http://fits.gsfc.nasa.gov/fits_standard.html>`_ for
+- `FITS Standard <https://fits.gsfc.nasa.gov/fits_standard.html>`_ for
   units in FITS.
 
-- The `proposed IVOA standard
-  <http://www.ivoa.net/Documents/VOUnits/>`_ for representing units in
+- The `Units in the VO 1.0 Standard
+  <http://www.ivoa.net/documents/VOUnits/>`_ for representing units in
   the VO.
 
 - OGIP Units: A standard for storing units in `OGIP FITS files
-  <http://heasarc.gsfc.nasa.gov/docs/heasarc/ofwg/docs/general/ogip_93_001/>`_.
+  <https://heasarc.gsfc.nasa.gov/docs/heasarc/ofwg/docs/general/ogip_93_001/>`_.
 
 - `Standards for astronomical catalogues units
-  <http://cds.u-strasbg.fr/doc/catstd-3.2.htx>`_.
+  <http://vizier.u-strasbg.fr/vizier/doc/catstd-3.2.htx>`_.
 
 - `IAU Style Manual
-  <http://www.iau.org/static/publications/stylemanual1989.pdf>`_.
+  <https://www.iau.org/static/publications/stylemanual1989.pdf>`_.
 
 - `A table of astronomical unit equivalencies
-  <http://astro.wku.edu/strolger/UNITS.txt>`_
+  <http://www.stsci.edu/~strolger/docs/UNITS.txt>`_.
+
+.. note that if this section gets too long, it should be moved to a separate
+   doc page - see the top of performance.inc.rst for the instructions on how to do
+   that
+.. include:: performance.inc.rst
 
 Reference/API
 =============
 
-.. automodapi:: astropy.units.core
+.. automodapi:: astropy.units.quantity
+
+.. automodapi:: astropy.units
 
 .. automodapi:: astropy.units.format
 
@@ -121,17 +238,21 @@ Reference/API
 
 .. automodapi:: astropy.units.astrophys
 
+.. automodapi:: astropy.units.function.units
+
+.. automodapi:: astropy.units.photometric
+
 .. automodapi:: astropy.units.imperial
+
+.. automodapi:: astropy.units.cds
 
 .. automodapi:: astropy.units.equivalencies
 
-.. automodapi:: astropy.units.quantity
+.. automodapi:: astropy.units.function
 
+.. automodapi:: astropy.units.function.logarithmic
+   :include-all-objects:
 
-Acknowledgments
-===============
+.. automodapi:: astropy.units.deprecated
 
-This code is adapted from the `pynbody
-<http://code.google.com/p/pynbody/>`_ units module written by Andrew
-Pontzen, who has granted the Astropy project permission to use the
-code under a BSD license.
+.. automodapi:: astropy.units.required_by_vounit

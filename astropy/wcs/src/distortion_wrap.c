@@ -5,8 +5,8 @@
 
 #define NO_IMPORT_ARRAY
 
-#include "distortion_wrap.h"
-#include "docstrings.h"
+#include "astropy_wcs/distortion_wrap.h"
+#include "astropy_wcs/docstrings.h"
 
 #include <structmember.h> /* From Python */
 
@@ -25,11 +25,7 @@ static int
 PyDistLookup_clear(
     PyDistLookup* self) {
 
-  PyObject* tmp;
-
-  tmp = (PyObject*)self->py_data;
-  self->py_data = NULL;
-  Py_XDECREF(tmp);
+  Py_CLEAR(self->py_data);
 
   return 0;
 }
@@ -38,6 +34,7 @@ static void
 PyDistLookup_dealloc(
     PyDistLookup* self) {
 
+  PyObject_GC_UnTrack(self);
   distortion_lookup_t_free(&self->x);
   Py_XDECREF(self->py_data);
   Py_TYPE(self)->tp_free((PyObject*)self);
@@ -78,7 +75,7 @@ PyDistLookup_init(
     return -1;
   }
 
-  array_obj = (PyArrayObject*)PyArray_ContiguousFromAny(py_array_obj, PyArray_FLOAT32, 2, 2);
+  array_obj = (PyArrayObject*)PyArray_ContiguousFromAny(py_array_obj, NPY_FLOAT32, 2, 2);
   if (array_obj == NULL) {
     return -1;
   }
@@ -177,13 +174,12 @@ PyDistLookup_set_data(
   PyArrayObject* value_array = NULL;
 
   if (value == NULL) {
-    Py_XDECREF(self->py_data);
-    self->py_data = NULL;
+    Py_CLEAR(self->py_data);
     self->x.data = NULL;
     return 0;
   }
 
-  value_array = (PyArrayObject*)PyArray_ContiguousFromAny(value, PyArray_FLOAT32, 2, 2);
+  value_array = (PyArrayObject*)PyArray_ContiguousFromAny(value, NPY_FLOAT32, 2, 2);
 
   if (value_array == NULL) {
     return -1;
@@ -302,12 +298,7 @@ static PyMethodDef PyDistLookup_methods[] = {
 };
 
 PyTypeObject PyDistLookupType = {
-#if PY3K
   PyVarObject_HEAD_INIT(NULL, 0)
-#else
-  PyObject_HEAD_INIT(NULL)
-  0,                            /*ob_size*/
-#endif
   "astropy.wcs.DistortionLookupTable",  /*tp_name*/
   sizeof(PyDistLookup),         /*tp_basicsize*/
   0,                            /*tp_itemsize*/

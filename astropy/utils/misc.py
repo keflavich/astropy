@@ -1,215 +1,38 @@
+# -*- coding: utf-8 -*-
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """
 A "grab bag" of relatively small general-purpose utilities that don't have
 a clear module/package to live in.
 """
 
-from __future__ import absolute_import
-
-import collections
+import abc
 import contextlib
-import functools
+import difflib
+import inspect
+import json
 import os
+import signal
 import sys
-import textwrap
 import traceback
-import warnings
+import unicodedata
+import locale
+import threading
+import re
+
+from contextlib import contextmanager
+from collections import defaultdict, OrderedDict
+
+from astropy.utils.decorators import deprecated
 
 
-__all__ = ['find_current_module', 'isiterable', 'deprecated', 'lazyproperty',
-           'deprecated_attribute', 'silence', 'format_exception',
-           'NumpyRNGContext', 'find_api_page', 'is_path_hidden',
-           'walk_skip_hidden']
-
-
-def find_current_module(depth=1, finddiff=False):
-    """ Determines the module/package from which this function is called.
-
-    This function has two modes, determined by the `finddiff` option. it
-    will either simply go the requested number of frames up the call
-    stack (if `finddiff` is False), or it will go up the call stack until
-    it reaches a module that is *not* in a specified set.
-
-    Parameters
-    ----------
-    depth : int
-        Specifies how far back to go in the call stack (0-indexed, so that
-        passing in 0 gives back `astropy.utils.misc`).
-    finddiff : bool or list
-        If False, the returned `mod` will just be `depth` frames up from
-        the current frame. Otherwise, the function will start at a frame
-        `depth` up from current, and continue up the call stack to the
-        first module that is *different* from those in the provided list.
-        In this case, `finddiff` can be a list of modules or modules
-        names. Alternatively, it can be True, which will use the module
-        `depth` call stack frames up as the module the returned module
-        most be different from.
-
-    Returns
-    -------
-    mod : module or None
-        The module object or None if the package cannot be found. The name of
-        the module is available as the ``__name__`` attribute of the returned
-        object (if it isn't None).
-
-    Raises
-    ------
-    ValueError
-        If `finddiff` is a list with an invalid entry.
-
-    Examples
-    --------
-    The examples below assume that there are two modules in a package named
-    `pkg`. ``mod1.py``::
-
-        def find1():
-            from astropy.utils import find_current_module
-            print find_current_module(1).__name__
-        def find2():
-            from astropy.utils import find_current_module
-            cmod = find_current_module(2)
-            if cmod is None:
-                print 'None'
-            else:
-                print cmod.__name__
-        def find_diff():
-            from astropy.utils import find_current_module
-            print find_current_module(0,True).__name__
-
-    ``mod2.py``::
-
-        def find():
-            from .mod1 import find2
-            find2()
-
-    With these modules in place, the following occurs::
-
-        >>> from pkg import mod1, mod2
-        >>> from astropy.utils import find_current_module
-        >>> mod1.find1()
-        pkg.mod1
-        >>> mod1.find2()
-        None
-        >>> mod2.find()
-        pkg.mod2
-        >>> find_current_module(0)
-        <module 'astropy.utils.misc' from 'astropy/utils/misc.py'>
-        >>> mod1.find_diff()
-        pkg.mod1
-
-    """
-    from inspect import currentframe, ismodule
-
-    # using a patched version of getmodule because the py 3.1 and 3.2 stdlib
-    # is broken if the list of modules changes during import
-    from .compat import inspect_getmodule
-
-    frm = currentframe()
-    for i in range(depth):
-        frm = frm.f_back
-        if frm is None:
-            return None
-
-    if finddiff:
-        currmod = inspect_getmodule(frm)
-        if finddiff is True:
-            diffmods = [currmod]
-        else:
-            diffmods = []
-            for fd in finddiff:
-                if ismodule(fd):
-                    diffmods.append(fd)
-                elif isinstance(fd, basestring):
-                    diffmods.append(__import__(fd))
-                elif fd is True:
-                    diffmods.append(currmod)
-                else:
-                    raise ValueError('invalid entry in finddiff')
-
-        while frm:
-            frmb = frm.f_back
-            modb = inspect_getmodule(frmb)
-            if modb not in diffmods:
-                return modb
-            frm = frmb
-    else:
-        return inspect_getmodule(frm)
-
-
-def find_mod_objs(modname, onlylocals=False):
-    """ Returns all the public attributes of a module referenced by name.
-
-    .. note::
-        The returned list *not* include subpackages or modules of
-        `modname`,nor does it include private attributes (those that
-        beginwith '_' or are not in `__all__`).
-
-    Parameters
-    ----------
-    modname : str
-        The name of the module to search.
-    onlylocals : bool
-        If True, only attributes that are either members of `modname` OR one of
-        its modules or subpackages will be included.
-
-    Returns
-    -------
-    localnames : list of str
-        A list of the names of the attributes as they are named in the
-        module `modname` .
-    fqnames : list of str
-        A list of the full qualified names of the attributes (e.g.,
-        ``astropy.utils.misc.find_mod_objs``). For attributes that are
-        simple variables, this is based on the local name, but for
-        functions or classes it can be different if they are actually
-        defined elsewhere and just referenced in `modname`.
-    objs : list of objects
-        A list of the actual attributes themselves (in the same order as
-        the other arguments)
-
-    """
-    from inspect import ismodule
-
-    __import__(modname)
-    mod = sys.modules[modname]
-
-    if hasattr(mod, '__all__'):
-        pkgitems = [(k, getattr(mod, k)) for k in mod.__all__]
-    else:
-        pkgitems = [(k, getattr(mod, k)) for k in dir(mod) if k[0] != '_']
-
-    #filter out modules and pull the names and objs out
-    localnames = [k for k, v in pkgitems if not ismodule(v)]
-    objs = [v for k, v in pkgitems if not ismodule(v)]
-
-    #fully qualified names can be determined from the object's module
-    fqnames = []
-    for obj, lnm in zip(objs, localnames):
-        if hasattr(obj, '__module__') and hasattr(obj, '__name__'):
-            fqnames.append(obj.__module__ + '.' + obj.__name__)
-        else:
-            fqnames.append(modname + '.' + lnm)
-
-    if onlylocals:
-        valids = [fqn.startswith(modname) for fqn in fqnames]
-        localnames = [e for i, e in enumerate(localnames) if valids[i]]
-        fqnames = [e for i, e in enumerate(fqnames) if valids[i]]
-        objs = [e for i, e in enumerate(objs) if valids[i]]
-
-    return localnames, fqnames, objs
+__all__ = ['isiterable', 'silence', 'format_exception', 'NumpyRNGContext',
+           'find_api_page', 'is_path_hidden', 'walk_skip_hidden',
+           'JsonCustomEncoder', 'indent', 'dtype_bytes_or_chars',
+           'OrderedDescriptor', 'OrderedDescriptorContainer']
 
 
 def isiterable(obj):
     """Returns `True` if the given object is iterable."""
-    from numpy import ndarray
-
-    # Numpy arrays are in collections.Iterable no matter what, but if you
-    # attempt to iterate over a 0-d array, it throws a TypeError.
-    if isinstance(obj, ndarray) and len(obj.shape) == 0:
-        return False
-
-    if isinstance(obj, collections.Iterable):
-        return True
 
     try:
         iter(obj)
@@ -218,277 +41,18 @@ def isiterable(obj):
         return False
 
 
-class lazyproperty(object):
-    """
-    Works similarly to property(), but computes the value only once.
+def indent(s, shift=1, width=4):
+    """Indent a block of text.  The indentation is applied to each line."""
 
-    This essentially memoizes the value of the property by storing the result
-    of its computation in the ``__dict__`` of the object instance.  This is
-    useful for computing the value of some property that should otherwise be
-    invariant.  For example::
+    indented = '\n'.join(' ' * (width * shift) + l if l else ''
+                         for l in s.splitlines())
+    if s[-1] == '\n':
+        indented += '\n'
 
-        >>> class LazyTest(object):
-        ...     @lazyproperty
-        ...     def complicated_property(self):
-        ...         print 'Computing the value for complicated_property...'
-        ...         return 42
-        ...
-        >>> lt = LazyTest()
-        >>> lt.complicated_property
-        Computing the value for complicated_property...
-        42
-        >>> lt.complicated_property
-        42
-
-    If a setter for this property is defined, it will still be possible to
-    manually update the value of the property, if that capability is desired.
-
-    Adapted from the recipe at
-    http://code.activestate.com/recipes/363602-lazy-property-evaluation
-    """
-
-    def __init__(self, fget, fset=None, fdel=None, doc=None):
-        self._fget = fget
-        self._fset = fset
-        self._fdel = fdel
-        if doc is None:
-            self.__doc__ = fget.__doc__
-        else:
-            self.__doc__ = doc
-
-    def __get__(self, obj, owner=None):
-        if obj is None:
-            return self
-        key = self._fget.func_name
-        if key not in obj.__dict__:
-            val = self._fget(obj)
-            obj.__dict__[key] = val
-            return val
-        else:
-            return obj.__dict__[key]
-
-    def __set__(self, obj, val):
-        if self._fset:
-            self._fset(obj, val)
-        obj.__dict__[self._fget.func_name] = val
-
-    def __delete__(self, obj):
-        if self._fdel:
-            self._fdel(obj)
-        key = self._fget.func_name
-        if key in obj.__dict__:
-            del obj.__dict__[key]
-
-    def getter(self, fget):
-        return self.__ter(fget, 0)
-
-    def setter(self, fset):
-        return self.__ter(fset, 1)
-
-    def deleter(self, fdel):
-        return self.__ter(fdel, 2)
-
-    def __ter(self, f, arg):
-        args = [self._fget, self._fset, self._fdel, self.__doc__]
-        args[arg] = f
-        cls_ns = sys._getframe(1).f_locals
-        for k, v in cls_ns.items():
-            if v is self:
-                property_name = k
-                break
-
-        cls_ns[property_name] = lazyproperty(*args)
-
-        return cls_ns[property_name]
+    return indented
 
 
-# TODO: Provide a class deprecation marker as well.
-def deprecated(since, message='', name='', alternative='', pending=False,
-               obj_type='function'):
-    """
-    Used to mark a function as deprecated.
-
-    To mark an attribute as deprecated, use `deprecated_attribute`.
-
-    Parameters
-    ------------
-    since : str
-        The release at which this API became deprecated.  This is
-        required.
-
-    message : str, optional
-        Override the default deprecation message.  The format
-        specifier `%(func)s` may be used for the name of the function,
-        and `%(alternative)s` may be used in the deprecation message
-        to insert the name of an alternative to the deprecated
-        function.  `%(obj_type)` may be used to insert a friendly name
-        for the type of object being deprecated.
-
-    name : str, optional
-        The name of the deprecated function; if not provided the name
-        is automatically determined from the passed in function,
-        though this is useful in the case of renamed functions, where
-        the new function is just assigned to the name of the
-        deprecated function.  For example::
-
-            def new_function():
-                ...
-            oldFunction = new_function
-
-    alternative : str, optional
-        An alternative function that the user may use in place of the
-        deprecated function.  The deprecation warning will tell the user about
-        this alternative if provided.
-
-    pending : bool, optional
-        If True, uses a PendingDeprecationWarning instead of a
-        DeprecationWarning.
-    """
-
-    def deprecate(func, message=message, name=name, alternative=alternative,
-                  pending=pending):
-        if isinstance(func, classmethod):
-            try:
-                func = func.__func__
-            except AttributeError:
-                # classmethods in Python2.6 and below lack the __func__
-                # attribute so we need to hack around to get it
-                method = func.__get__(None, object)
-                if hasattr(method, '__func__'):
-                    func = method.__func__
-                elif hasattr(method, 'im_func'):
-                    func = method.im_func
-                else:
-                    # Nothing we can do really...  just return the original
-                    # classmethod
-                    return func
-            is_classmethod = True
-        else:
-            is_classmethod = False
-
-        if not name:
-            name = func.__name__
-
-        altmessage = ''
-        if not message or type(message) == type(deprecate):
-            if pending:
-                message = ('The %(func)s %(obj_type)s will be deprecated in a '
-                           'future version.')
-            else:
-                message = ('The %(func)s %(obj_type)s is deprecated and may '
-                           'be removed in a future version.')
-            if alternative:
-                altmessage = '\n        Use %s instead.' % alternative
-
-        message = ((message % {
-            'func': name,
-            'name': name,
-            'alternative': alternative,
-            'obj_type': obj_type}) +
-            altmessage)
-
-        @functools.wraps(func)
-        def deprecated_func(*args, **kwargs):
-            if pending:
-                category = PendingDeprecationWarning
-            else:
-                category = DeprecationWarning
-
-            warnings.warn(message, category, stacklevel=2)
-
-            return func(*args, **kwargs)
-
-        old_doc = deprecated_func.__doc__
-        if not old_doc:
-            old_doc = ''
-        old_doc = textwrap.dedent(old_doc).strip('\n')
-        altmessage = altmessage.strip()
-        if not altmessage:
-            altmessage = message.strip()
-        new_doc = (('\n.. deprecated:: %(since)s'
-                    '\n    %(message)s\n\n' %
-                    {'since': since, 'message': altmessage.strip()}) + old_doc)
-        if not old_doc:
-            # This is to prevent a spurious 'unexected unindent' warning from
-            # docutils when the original docstring was blank.
-            new_doc += r'\ '
-
-        deprecated_func.__doc__ = new_doc
-
-        if is_classmethod:
-            deprecated_func = classmethod(deprecated_func)
-        return deprecated_func
-
-    if type(message) == type(deprecate):
-        return deprecate(message)
-
-    return deprecate
-
-
-def deprecated_attribute(name, since, message=None, alternative=None,
-                         pending=False):
-    """
-    Used to mark a public attribute as deprecated.  This creates a
-    property that will warn when the given attribute name is accessed.
-    To prevent the warning (i.e. for internal code), use the private
-    name for the attribute by prepending an underscore
-    (i.e. `self._name`).
-
-    Parameters
-    ----------
-    name : str
-        The name of the deprecated attribute.
-
-    since : str
-        The release at which this API became deprecated.  This is
-        required.
-
-    message : str, optional
-        Override the default deprecation message.  The format
-        specifier `%(name)s` may be used for the name of the attribute,
-        and `%(alternative)s` may be used in the deprecation message
-        to insert the name of an alternative to the deprecated
-        function.
-
-    alternative : str, optional
-        An alternative attribute that the user may use in place of the
-        deprecated attribute.  The deprecation warning will tell the
-        user about this alternative if provided.
-
-    pending : bool, optional
-        If True, uses a PendingDeprecationWarning instead of a
-        DeprecationWarning.
-
-    Examples
-    --------
-
-    ::
-
-        class MyClass:
-            # Mark the old_name as deprecated
-            old_name = misc.deprecated_attribute('old_name', '0.1')
-
-            def method(self):
-                self._old_name = 42
-    """
-    private_name = '_' + name
-
-    @deprecated(since, name=name, obj_type='attribute')
-    def get(self):
-        return getattr(self, private_name)
-
-    @deprecated(since, name=name, obj_type='attribute')
-    def set(self, val):
-        setattr(self, private_name, val)
-
-    @deprecated(since, name=name, obj_type='attribute')
-    def delete(self):
-        delattr(self, private_name)
-
-    return property(get, set, delete)
-
-
-class _DummyFile(object):
+class _DummyFile:
     """A noop writeable object."""
 
     def write(self, s):
@@ -525,12 +89,11 @@ def format_exception(msg, *args, **kwargs):
     also used to format the message.
 
     .. note::
-        This uses `sys.exc_info` to gather up the information needed to
-        fill in the formatting arguments. Python 2.x and 3.x have slightly
-        different behavior regarding `sys.exc_info` (the latter will not carry
-        it outside a handled exception), so it's not wise to use this outside of
-        an `except` clause - if it is, this will substitute '<unkown>' for the 4
-        formatting arguments.
+        This uses `sys.exc_info` to gather up the information needed to fill
+        in the formatting arguments. Since `sys.exc_info` is not carried
+        outside a handled exception, it's not wise to use this
+        outside of an ``except`` clause - if it is, this will substitute
+        '<unkonwn>' for the 4 formatting arguments.
     """
 
     tb = traceback.extract_tb(sys.exc_info()[2], limit=1)
@@ -543,7 +106,7 @@ def format_exception(msg, *args, **kwargs):
                       text=text, **kwargs)
 
 
-class NumpyRNGContext(object):
+class NumpyRNGContext:
     """
     A context manager (for use with the ``with`` statement) that will seed the
     numpy random number generator (RNG) to a specific value, and then restore
@@ -574,6 +137,7 @@ class NumpyRNGContext(object):
 
 
     """
+
     def __init__(self, seed):
         self.seed = seed
 
@@ -589,14 +153,15 @@ class NumpyRNGContext(object):
         random.set_state(self.startstate)
 
 
-def find_api_page(obj, version='dev', openinbrowser=True, timeout=None):
+def find_api_page(obj, version=None, openinbrowser=True, timeout=None):
     """
     Determines the URL of the API page for the specified object, and
     optionally open that page in a web browser.
 
     .. note::
-        You must be connected to the internet for this to function even
-        if `openinbrowser` is False.
+        You must be connected to the internet for this to function even if
+        ``openinbrowser`` is `False`, unless you provide a local version of
+        the documentation to ``version`` (e.g., ``file:///path/to/docs``).
 
     Parameters
     ----------
@@ -604,15 +169,19 @@ def find_api_page(obj, version='dev', openinbrowser=True, timeout=None):
         The object to open the docs for or its fully-qualified name
         (as a str).
     version : str
-        The doc version - either a version number like '0.1' or 'dev'
-        for the development/latest docs.
+        The doc version - either a version number like '0.1', 'dev' for
+        the development/latest docs, or a URL to point to a specific
+        location that should be the *base* of the documentation. Defaults to
+        latest if you are on aren't on a release, otherwise, the version you
+        are on.
     openinbrowser : bool
-        If True, the `webbrowser` package will be used to open the doc
+        If `True`, the `webbrowser` package will be used to open the doc
         page in a new web browser window.
     timeout : number, optional
         The number of seconds to wait before timing-out the query to
         the astropy documentation.  If not given, the default python
         stdlib timeout will be used.
+
     Returns
     -------
     url : str
@@ -625,48 +194,78 @@ def find_api_page(obj, version='dev', openinbrowser=True, timeout=None):
 
     """
     import webbrowser
-
-    from inspect import ismodule
+    import urllib.request
     from zlib import decompress
-    from urllib2 import urlopen
 
-    if (not isinstance(obj, basestring) and
+    if (not isinstance(obj, str) and
             hasattr(obj, '__module__') and
             hasattr(obj, '__name__')):
         obj = obj.__module__ + '.' + obj.__name__
-    elif ismodule(obj):
+    elif inspect.ismodule(obj):
         obj = obj.__name__
 
-    if version == 'dev':
+    if version is None:
+        from astropy import version
+
+        if version.release:
+            version = 'v' + version.version
+        else:
+            version = 'dev'
+
+    if '://' in version:
+        if version.endswith('index.html'):
+            baseurl = version[:-10]
+        elif version.endswith('/'):
+            baseurl = version
+        else:
+            baseurl = version + '/'
+    elif version == 'dev' or version == 'latest':
         baseurl = 'http://devdocs.astropy.org/'
     else:
-        baseurl = 'http://docs.astropy.org/en/{vers}/'.format(vers=version)
+        baseurl = f'https://docs.astropy.org/en/{version}/'
+
+    # Custom request headers; see
+    # https://github.com/astropy/astropy/issues/8990
+    req = urllib.request.Request(
+        baseurl + 'objects.inv', headers={'User-Agent': f'Astropy/{version}'})
 
     if timeout is None:
-        uf = urlopen(baseurl + 'objects.inv')
+        uf = urllib.request.urlopen(req)
     else:
-        uf = urlopen(baseurl + 'objects.inv', timeout=timeout)
+        uf = urllib.request.urlopen(req, timeout=timeout)
 
     try:
-        # we read these lines so that `oistr` only gets the compressed
-        # contents, not the header information
-        isvers = uf.readline().rstrip().decode('utf-8')  # intersphinx version line
-        proj = uf.readline().rstrip().decode('utf-8')  # project name
-        vers = uf.readline().rstrip().decode('utf-8')  # project version
-        uf.readline().rstrip().decode('utf-8')
-        oistr = uf.read()
+        oiread = uf.read()
+
+        # need to first read/remove the first four lines, which have info before
+        # the compressed section with the actual object inventory
+        idx = -1
+        headerlines = []
+        for _ in range(4):
+            oldidx = idx
+            idx = oiread.index(b'\n', oldidx + 1)
+            headerlines.append(oiread[(oldidx+1):idx].decode('utf-8'))
+
+        # intersphinx version line, project name, and project version
+        ivers, proj, vers, compr = headerlines
+        if 'The remainder of this file is compressed using zlib' not in compr:
+            raise ValueError('The file downloaded from {} does not seem to be'
+                             'the usual Sphinx objects.inv format.  Maybe it '
+                             'has changed?'.format(baseurl + 'objects.inv'))
+
+        compressed = oiread[(idx+1):]
     finally:
         uf.close()
 
-    oistr = decompress(oistr).decode('utf-8')
+    decompressed = decompress(compressed).decode('utf-8')
 
     resurl = None
 
-    for l in oistr.strip().splitlines():
+    for l in decompressed.strip().splitlines():
         ls = l.split()
         name = ls[0]
         loc = ls[3]
-        if loc.endswith(b'$'):
+        if loc.endswith('$'):
             loc = loc[:-1] + name
 
         if name == obj:
@@ -674,7 +273,7 @@ def find_api_page(obj, version='dev', openinbrowser=True, timeout=None):
             break
 
     if resurl is None:
-        raise ValueError('Could not find the docs for the object {obj}'.format(obj=obj))
+        raise ValueError(f'Could not find the docs for the object {obj}')
     elif openinbrowser:
         webbrowser.open(resurl)
 
@@ -689,9 +288,8 @@ def signal_number_to_name(signum):
     # Since these numbers and names are platform specific, we use the
     # builtin signal module and build a reverse mapping.
 
-    import signal
-    signal_to_name_map = dict(
-        (k, v) for v, k in signal.__dict__.iteritems() if v.startswith('SIG'))
+    signal_to_name_map = dict((k, v) for v, k in signal.__dict__.items()
+                              if v.startswith('SIG'))
 
     return signal_to_name_map.get(signum, 'UNKNOWN')
 
@@ -703,15 +301,14 @@ if sys.platform == 'win32':
         """
         Returns True if the given filepath has the hidden attribute on
         MS-Windows.  Based on a post here:
-        http://stackoverflow.com/questions/284115/cross-platform-hidden-file-detection
+        https://stackoverflow.com/questions/284115/cross-platform-hidden-file-detection
         """
         if isinstance(filepath, bytes):
             filepath = filepath.decode(sys.getfilesystemencoding())
         try:
             attrs = ctypes.windll.kernel32.GetFileAttributesW(filepath)
-            assert attrs != -1
-            result = bool(attrs & 2)
-        except (AttributeError, AssertionError):
+            result = bool(attrs & 2) and attrs != -1
+        except AttributeError:
             result = False
         return result
 else:
@@ -745,7 +342,7 @@ def walk_skip_hidden(top, onerror=None, followlinks=False):
     """
     A wrapper for `os.walk` that skips hidden files and directories.
 
-    This function does not have the parameter `topdown` from
+    This function does not have the parameter ``topdown`` from
     `os.walk`: the directories must always be recursed top-down when
     using this function.
 
@@ -761,3 +358,589 @@ def walk_skip_hidden(top, onerror=None, followlinks=False):
         dirs[:] = [d for d in dirs if not is_path_hidden(d)]
         files[:] = [f for f in files if not is_path_hidden(f)]
         yield root, dirs, files
+
+
+class JsonCustomEncoder(json.JSONEncoder):
+    """Support for data types that JSON default encoder
+    does not do.
+
+    This includes:
+
+        * Numpy array or number
+        * Complex number
+        * Set
+        * Bytes
+        * astropy.UnitBase
+        * astropy.Quantity
+
+    Examples
+    --------
+    >>> import json
+    >>> import numpy as np
+    >>> from astropy.utils.misc import JsonCustomEncoder
+    >>> json.dumps(np.arange(3), cls=JsonCustomEncoder)
+    '[0, 1, 2]'
+
+    """
+
+    def default(self, obj):
+        from astropy import units as u
+        import numpy as np
+        if isinstance(obj, u.Quantity):
+            return dict(value=obj.value, unit=obj.unit.to_string())
+        if isinstance(obj, (np.number, np.ndarray)):
+            return obj.tolist()
+        elif isinstance(obj, complex):
+            return [obj.real, obj.imag]
+        elif isinstance(obj, set):
+            return list(obj)
+        elif isinstance(obj, bytes):  # pragma: py3
+            return obj.decode()
+        elif isinstance(obj, (u.UnitBase, u.FunctionUnitBase)):
+            if obj == u.dimensionless_unscaled:
+                obj = 'dimensionless_unit'
+            else:
+                return obj.to_string()
+
+        return json.JSONEncoder.default(self, obj)
+
+
+def strip_accents(s):
+    """
+    Remove accents from a Unicode string.
+
+    This helps with matching "ångström" to "angstrom", for example.
+    """
+    return ''.join(
+        c for c in unicodedata.normalize('NFD', s)
+        if unicodedata.category(c) != 'Mn')
+
+
+def did_you_mean(s, candidates, n=3, cutoff=0.8, fix=None):
+    """
+    When a string isn't found in a set of candidates, we can be nice
+    to provide a list of alternatives in the exception.  This
+    convenience function helps to format that part of the exception.
+
+    Parameters
+    ----------
+    s : str
+
+    candidates : sequence of str or dict of str keys
+
+    n : int
+        The maximum number of results to include.  See
+        `difflib.get_close_matches`.
+
+    cutoff : float
+        In the range [0, 1]. Possibilities that don't score at least
+        that similar to word are ignored.  See
+        `difflib.get_close_matches`.
+
+    fix : callable
+        A callable to modify the results after matching.  It should
+        take a single string and return a sequence of strings
+        containing the fixed matches.
+
+    Returns
+    -------
+    message : str
+        Returns the string "Did you mean X, Y, or Z?", or the empty
+        string if no alternatives were found.
+    """
+    if isinstance(s, str):
+        s = strip_accents(s)
+    s_lower = s.lower()
+
+    # Create a mapping from the lower case name to all capitalization
+    # variants of that name.
+    candidates_lower = {}
+    for candidate in candidates:
+        candidate_lower = candidate.lower()
+        candidates_lower.setdefault(candidate_lower, [])
+        candidates_lower[candidate_lower].append(candidate)
+
+    # The heuristic here is to first try "singularizing" the word.  If
+    # that doesn't match anything use difflib to find close matches in
+    # original, lower and upper case.
+    if s_lower.endswith('s') and s_lower[:-1] in candidates_lower:
+        matches = [s_lower[:-1]]
+    else:
+        matches = difflib.get_close_matches(
+            s_lower, candidates_lower, n=n, cutoff=cutoff)
+
+    if len(matches):
+        capitalized_matches = set()
+        for match in matches:
+            capitalized_matches.update(candidates_lower[match])
+        matches = capitalized_matches
+
+        if fix is not None:
+            mapped_matches = []
+            for match in matches:
+                mapped_matches.extend(fix(match))
+            matches = mapped_matches
+
+        matches = list(set(matches))
+        matches = sorted(matches)
+
+        if len(matches) == 1:
+            matches = matches[0]
+        else:
+            matches = (', '.join(matches[:-1]) + ' or ' +
+                       matches[-1])
+        return f'Did you mean {matches}?'
+
+    return ''
+
+
+@deprecated('4.0', alternative='Sphinx>=1.7 automatically inherits docstring')
+class InheritDocstrings(type):
+    """
+    This metaclass makes methods of a class automatically have their
+    docstrings filled in from the methods they override in the base
+    class.
+
+    If the class uses multiple inheritance, the docstring will be
+    chosen from the first class in the bases list, in the same way as
+    methods are normally resolved in Python.  If this results in
+    selecting the wrong docstring, the docstring will need to be
+    explicitly included on the method.
+
+    For example::
+
+        >>> import warnings
+        >>> with warnings.catch_warnings():
+        ...     # Ignore deprecation warning
+        ...     warnings.simplefilter('ignore')
+        ...     from astropy.utils.misc import InheritDocstrings
+        ...     class A(metaclass=InheritDocstrings):
+        ...         def wiggle(self):
+        ...             "Wiggle the thingamajig"
+        ...             pass
+        ...     class B(A):
+        ...         def wiggle(self):
+        ...             pass
+        >>> B.wiggle.__doc__
+        u'Wiggle the thingamajig'
+    """
+
+    def __init__(cls, name, bases, dct):
+        def is_public_member(key):
+            return (
+                (key.startswith('__') and key.endswith('__')
+                 and len(key) > 4) or
+                not key.startswith('_'))
+
+        for key, val in dct.items():
+            if ((inspect.isfunction(val) or inspect.isdatadescriptor(val)) and
+                    is_public_member(key) and
+                    val.__doc__ is None):
+                for base in cls.__mro__[1:]:
+                    super_method = getattr(base, key, None)
+                    if super_method is not None:
+                        val.__doc__ = super_method.__doc__
+                        break
+
+        super().__init__(name, bases, dct)
+
+
+class OrderedDescriptor(metaclass=abc.ABCMeta):
+    """
+    Base class for descriptors whose order in the class body should be
+    preserved.  Intended for use in concert with the
+    `OrderedDescriptorContainer` metaclass.
+
+    Subclasses of `OrderedDescriptor` must define a value for a class attribute
+    called ``_class_attribute_``.  This is the name of a class attribute on the
+    *container* class for these descriptors, which will be set to an
+    `~collections.OrderedDict` at class creation time.  This
+    `~collections.OrderedDict` will contain a mapping of all class attributes
+    that were assigned instances of the `OrderedDescriptor` subclass, to the
+    instances themselves.  See the documentation for
+    `OrderedDescriptorContainer` for a concrete example.
+
+    Optionally, subclasses of `OrderedDescriptor` may define a value for a
+    class attribute called ``_name_attribute_``.  This should be the name of
+    an attribute on instances of the subclass.  When specified, during
+    creation of a class containing these descriptors, the name attribute on
+    each instance will be set to the name of the class attribute it was
+    assigned to on the class.
+
+    .. note::
+
+        Although this class is intended for use with *descriptors* (i.e.
+        classes that define any of the ``__get__``, ``__set__``, or
+        ``__delete__`` magic methods), this base class is not itself a
+        descriptor, and technically this could be used for classes that are
+        not descriptors too.  However, use with descriptors is the original
+        intended purpose.
+    """
+
+    # This id increments for each OrderedDescriptor instance created, so they
+    # are always ordered in the order they were created.  Class bodies are
+    # guaranteed to be executed from top to bottom.  Not sure if this is
+    # thread-safe though.
+    _nextid = 1
+
+    @property
+    @abc.abstractmethod
+    def _class_attribute_(self):
+        """
+        Subclasses should define this attribute to the name of an attribute on
+        classes containing this subclass.  That attribute will contain the mapping
+        of all instances of that `OrderedDescriptor` subclass defined in the class
+        body.  If the same descriptor needs to be used with different classes,
+        each with different names of this attribute, multiple subclasses will be
+        needed.
+        """
+
+    _name_attribute_ = None
+    """
+    Subclasses may optionally define this attribute to specify the name of an
+    attribute on instances of the class that should be filled with the
+    instance's attribute name at class creation time.
+    """
+
+    def __init__(self, *args, **kwargs):
+        # The _nextid attribute is shared across all subclasses so that
+        # different subclasses of OrderedDescriptors can be sorted correctly
+        # between themselves
+        self.__order = OrderedDescriptor._nextid
+        OrderedDescriptor._nextid += 1
+        super().__init__()
+
+    def __lt__(self, other):
+        """
+        Defined for convenient sorting of `OrderedDescriptor` instances, which
+        are defined to sort in their creation order.
+        """
+
+        if (isinstance(self, OrderedDescriptor) and
+                isinstance(other, OrderedDescriptor)):
+            try:
+                return self.__order < other.__order
+            except AttributeError:
+                raise RuntimeError(
+                    'Could not determine ordering for {} and {}; at least '
+                    'one of them is not calling super().__init__ in its '
+                    '__init__.'.format(self, other))
+        else:
+            return NotImplemented
+
+
+class OrderedDescriptorContainer(type):
+    """
+    Classes should use this metaclass if they wish to use `OrderedDescriptor`
+    attributes, which are class attributes that "remember" the order in which
+    they were defined in the class body.
+
+    Every subclass of `OrderedDescriptor` has an attribute called
+    ``_class_attribute_``.  For example, if we have
+
+    .. code:: python
+
+        class ExampleDecorator(OrderedDescriptor):
+            _class_attribute_ = '_examples_'
+
+    Then when a class with the `OrderedDescriptorContainer` metaclass is
+    created, it will automatically be assigned a class attribute ``_examples_``
+    referencing an `~collections.OrderedDict` containing all instances of
+    ``ExampleDecorator`` defined in the class body, mapped to by the names of
+    the attributes they were assigned to.
+
+    When subclassing a class with this metaclass, the descriptor dict (i.e.
+    ``_examples_`` in the above example) will *not* contain descriptors
+    inherited from the base class.  That is, this only works by default with
+    decorators explicitly defined in the class body.  However, the subclass
+    *may* define an attribute ``_inherit_decorators_`` which lists
+    `OrderedDescriptor` classes that *should* be added from base classes.
+    See the examples section below for an example of this.
+
+    Examples
+    --------
+
+    >>> from astropy.utils import OrderedDescriptor, OrderedDescriptorContainer
+    >>> class TypedAttribute(OrderedDescriptor):
+    ...     \"\"\"
+    ...     Attributes that may only be assigned objects of a specific type,
+    ...     or subclasses thereof.  For some reason we care about their order.
+    ...     \"\"\"
+    ...
+    ...     _class_attribute_ = 'typed_attributes'
+    ...     _name_attribute_ = 'name'
+    ...     # A default name so that instances not attached to a class can
+    ...     # still be repr'd; useful for debugging
+    ...     name = '<unbound>'
+    ...
+    ...     def __init__(self, type):
+    ...         # Make sure not to forget to call the super __init__
+    ...         super().__init__()
+    ...         self.type = type
+    ...
+    ...     def __get__(self, obj, objtype=None):
+    ...         if obj is None:
+    ...             return self
+    ...         if self.name in obj.__dict__:
+    ...             return obj.__dict__[self.name]
+    ...         else:
+    ...             raise AttributeError(self.name)
+    ...
+    ...     def __set__(self, obj, value):
+    ...         if not isinstance(value, self.type):
+    ...             raise ValueError('{0}.{1} must be of type {2!r}'.format(
+    ...                 obj.__class__.__name__, self.name, self.type))
+    ...         obj.__dict__[self.name] = value
+    ...
+    ...     def __delete__(self, obj):
+    ...         if self.name in obj.__dict__:
+    ...             del obj.__dict__[self.name]
+    ...         else:
+    ...             raise AttributeError(self.name)
+    ...
+    ...     def __repr__(self):
+    ...         if isinstance(self.type, tuple) and len(self.type) > 1:
+    ...             typestr = '({0})'.format(
+    ...                 ', '.join(t.__name__ for t in self.type))
+    ...         else:
+    ...             typestr = self.type.__name__
+    ...         return '<{0}(name={1}, type={2})>'.format(
+    ...                 self.__class__.__name__, self.name, typestr)
+    ...
+
+    Now let's create an example class that uses this ``TypedAttribute``::
+
+        >>> class Point2D(metaclass=OrderedDescriptorContainer):
+        ...     x = TypedAttribute((float, int))
+        ...     y = TypedAttribute((float, int))
+        ...
+        ...     def __init__(self, x, y):
+        ...         self.x, self.y = x, y
+        ...
+        >>> p1 = Point2D(1.0, 2.0)
+        >>> p1.x
+        1.0
+        >>> p1.y
+        2.0
+        >>> p2 = Point2D('a', 'b')  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+            ...
+        ValueError: Point2D.x must be of type (float, int>)
+
+    We see that ``TypedAttribute`` works more or less as advertised, but
+    there's nothing special about that.  Let's see what
+    `OrderedDescriptorContainer` did for us::
+
+        >>> Point2D.typed_attributes
+        OrderedDict([('x', <TypedAttribute(name=x, type=(float, int))>),
+        ('y', <TypedAttribute(name=y, type=(float, int))>)])
+
+    If we create a subclass, it does *not* by default add inherited descriptors
+    to ``typed_attributes``::
+
+        >>> class Point3D(Point2D):
+        ...     z = TypedAttribute((float, int))
+        ...
+        >>> Point3D.typed_attributes
+        OrderedDict([('z', <TypedAttribute(name=z, type=(float, int))>)])
+
+    However, if we specify ``_inherit_descriptors_`` from ``Point2D`` then
+    it will do so::
+
+        >>> class Point3D(Point2D):
+        ...     _inherit_descriptors_ = (TypedAttribute,)
+        ...     z = TypedAttribute((float, int))
+        ...
+        >>> Point3D.typed_attributes
+        OrderedDict([('x', <TypedAttribute(name=x, type=(float, int))>),
+        ('y', <TypedAttribute(name=y, type=(float, int))>),
+        ('z', <TypedAttribute(name=z, type=(float, int))>)])
+
+    .. note::
+
+        Hopefully it is clear from these examples that this construction
+        also allows a class of type `OrderedDescriptorContainer` to use
+        multiple different `OrderedDescriptor` classes simultaneously.
+    """
+
+    _inherit_descriptors_ = ()
+
+    def __init__(cls, cls_name, bases, members):
+        descriptors = defaultdict(list)
+        seen = set()
+        inherit_descriptors = ()
+        descr_bases = {}
+
+        for mro_cls in cls.__mro__:
+            for name, obj in mro_cls.__dict__.items():
+                if name in seen:
+                    # Checks if we've already seen an attribute of the given
+                    # name (if so it will override anything of the same name in
+                    # any base class)
+                    continue
+
+                seen.add(name)
+
+                if (not isinstance(obj, OrderedDescriptor) or
+                        (inherit_descriptors and
+                            not isinstance(obj, inherit_descriptors))):
+                    # The second condition applies when checking any
+                    # subclasses, to see if we can inherit any descriptors of
+                    # the given type from subclasses (by default inheritance is
+                    # disabled unless the class has _inherit_descriptors_
+                    # defined)
+                    continue
+
+                if obj._name_attribute_ is not None:
+                    setattr(obj, obj._name_attribute_, name)
+
+                # Don't just use the descriptor's class directly; instead go
+                # through its MRO and find the class on which _class_attribute_
+                # is defined directly.  This way subclasses of some
+                # OrderedDescriptor *may* override _class_attribute_ and have
+                # its own _class_attribute_, but by default all subclasses of
+                # some OrderedDescriptor are still grouped together
+                # TODO: It might be worth clarifying this in the docs
+                if obj.__class__ not in descr_bases:
+                    for obj_cls_base in obj.__class__.__mro__:
+                        if '_class_attribute_' in obj_cls_base.__dict__:
+                            descr_bases[obj.__class__] = obj_cls_base
+                            descriptors[obj_cls_base].append((obj, name))
+                            break
+                else:
+                    # Make sure to put obj first for sorting purposes
+                    obj_cls_base = descr_bases[obj.__class__]
+                    descriptors[obj_cls_base].append((obj, name))
+
+            if not getattr(mro_cls, '_inherit_descriptors_', False):
+                # If _inherit_descriptors_ is undefined then we don't inherit
+                # any OrderedDescriptors from any of the base classes, and
+                # there's no reason to continue through the MRO
+                break
+            else:
+                inherit_descriptors = mro_cls._inherit_descriptors_
+
+        for descriptor_cls, instances in descriptors.items():
+            instances.sort()
+            instances = OrderedDict((key, value) for value, key in instances)
+            setattr(cls, descriptor_cls._class_attribute_, instances)
+
+        super(OrderedDescriptorContainer, cls).__init__(cls_name, bases,
+                                                        members)
+
+
+def get_parameters(members):
+    """
+    Looks for ordered descriptors in a class definition and
+    copies such definitions in two new class attributes,
+    one being a dictionary of these objects keyed by their
+    attribute names, and the other a simple list of those names.
+
+    """
+    pdict = OrderedDict()
+    for name, obj in members.items():
+        if (not isinstance(obj, OrderedDescriptor)):
+            continue
+        if obj._name_attribute_ is not None:
+            setattr(obj, '_name', name)
+        pdict[name] = obj
+
+    # members['_parameter_vals_'] = pdict
+    members['_parameters_'] = pdict
+
+
+LOCALE_LOCK = threading.Lock()
+
+
+@contextmanager
+def _set_locale(name):
+    """
+    Context manager to temporarily set the locale to ``name``.
+
+    An example is setting locale to "C" so that the C strtod()
+    function will use "." as the decimal point to enable consistent
+    numerical string parsing.
+
+    Note that one cannot nest multiple _set_locale() context manager
+    statements as this causes a threading lock.
+
+    This code taken from https://stackoverflow.com/questions/18593661/how-do-i-strftime-a-date-object-in-a-different-locale.
+
+    Parameters
+    ==========
+    name : str
+        Locale name, e.g. "C" or "fr_FR".
+    """
+    name = str(name)
+
+    with LOCALE_LOCK:
+        saved = locale.setlocale(locale.LC_ALL)
+        if saved == name:
+            # Don't do anything if locale is already the requested locale
+            yield
+        else:
+            try:
+                locale.setlocale(locale.LC_ALL, name)
+                yield
+            finally:
+                locale.setlocale(locale.LC_ALL, saved)
+
+
+set_locale = deprecated('4.0')(_set_locale)
+set_locale.__doc__ = """Deprecated version of :func:`_set_locale` above.
+See https://github.com/astropy/astropy/issues/9196
+"""
+
+
+def dtype_bytes_or_chars(dtype):
+    """
+    Parse the number out of a dtype.str value like '<U5' or '<f8'.
+
+    See #5819 for discussion on the need for this function for getting
+    the number of characters corresponding to a string dtype.
+
+    Parameters
+    ----------
+    dtype : numpy dtype object
+        Input dtype
+
+    Returns
+    -------
+    bytes_or_chars : int or None
+        Bits (for numeric types) or characters (for string types)
+    """
+    match = re.search(r'(\d+)$', dtype.str)
+    out = int(match.group(1)) if match else None
+    return out
+
+
+def _hungry_for(option):  # pragma: no cover
+    """
+    Open browser loaded with ``option`` options near you.
+
+    *Disclaimers: Payments not included. Astropy is not
+    responsible for any liability from using this function.*
+
+    .. note:: Accuracy depends on your browser settings.
+
+    """
+    import webbrowser
+    webbrowser.open(f'https://www.google.com/search?q={option}+near+me')
+
+
+def pizza():  # pragma: no cover
+    """``/pizza``"""
+    _hungry_for('pizza')
+
+
+def coffee(is_adam=False, is_brigitta=False):  # pragma: no cover
+    """``/coffee``"""
+    if is_adam and is_brigitta:
+        raise ValueError('There can be only one!')
+    if is_adam:
+        option = 'fresh+third+wave+coffee'
+    elif is_brigitta:
+        option = 'decent+espresso'
+    else:
+        option = 'coffee'
+    _hungry_for(option)

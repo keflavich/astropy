@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,7 +22,7 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: wcsunits.c,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: wcsunits.c,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *===========================================================================*/
 
 #include <math.h>
@@ -94,11 +94,10 @@ int wcsunits(
   double *power)
 
 {
-  return wcsunitse(
-    have, want, scale, offset, power, 0x0);
+  return wcsunitse(have, want, scale, offset, power, 0x0);
 }
 
-/* : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : : :  */
+/*--------------------------------------------------------------------------*/
 
 int wcsunitse(
   const char have[],

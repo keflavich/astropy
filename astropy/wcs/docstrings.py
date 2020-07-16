@@ -1,14 +1,4 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-from __future__ import division  # confidence high
-# We don't want the "division" symbol in the namespace, since it
-# should have only docstrings
-try:
-    del division
-except NameError:
-    # When building the configuration defaults in 3.x, the ``del division`` line
-    # throws a NameError because for some reason it seems to think it's already
-    # deleted.  This works around that.
-    pass
 
 # It gets to be really tedious to type long docstrings in ANSI C
 # syntax (since multi-line string literals are not valid).
@@ -16,7 +6,60 @@ except NameError:
 # which are then converted by setup.py into docstrings.h, which is
 # included by pywcs.c
 
-from . import _docutil as __
+__all__ = ['TWO_OR_MORE_ARGS', 'RETURNS', 'ORIGIN', 'RA_DEC_ORDER']
+
+
+def _fix(content, indent=0):
+    lines = content.split('\n')
+    indent = '\n' + ' ' * indent
+    return indent.join(lines)
+
+
+def TWO_OR_MORE_ARGS(naxis, indent=0):
+    return _fix(
+"""args : flexible
+    There are two accepted forms for the positional arguments:
+
+        - 2 arguments: An *N* x *{}* array of coordinates, and an
+          *origin*.
+
+        - more than 2 arguments: An array for each axis, followed by
+          an *origin*.  These arrays must be broadcastable to one
+          another.
+
+    Here, *origin* is the coordinate in the upper left corner of the
+    image.  In FITS and Fortran standards, this is 1.  In Numpy and C
+    standards this is 0.
+""".format(naxis), indent)
+
+
+def RETURNS(out_type, indent=0):
+    return _fix("""result : array
+    Returns the {}.  If the input was a single array and
+    origin, a single array is returned, otherwise a tuple of arrays is
+    returned.""".format(out_type), indent)
+
+
+def ORIGIN(indent=0):
+    return _fix(
+"""
+origin : int
+    Specifies the origin of pixel values.  The Fortran and FITS
+    standards use an origin of 1.  Numpy and C use array indexing with
+    origin at 0.
+""", indent)
+
+
+def RA_DEC_ORDER(indent=0):
+    return _fix(
+"""
+ra_dec_order : bool, optional
+    When `True` will ensure that world coordinates are always given
+    and returned in as (*ra*, *dec*) pairs, regardless of the order of
+    the axes specified by the in the ``CTYPE`` keywords.  Default is
+    `False`.
+""", indent)
+
 
 a = """
 ``double array[a_order+1][a_order+1]`` Focal plane transformation
@@ -40,27 +83,27 @@ Transforms pixel coordinates to world coordinates.
 
 Does the following:
 
-    - Detector to image plane correction (optionally)
+    - Detector to image plane correction (if present)
 
-    - SIP distortion correction (optionally)
+    - SIP distortion correction (if present)
 
-    - Paper IV distortion correction (optionally)
+    - FITS WCS distortion correction (if present)
 
-    - wcslib WCS transformation
+    - wcslib "core" WCS transformation
 
 The first three (the distortion corrections) are done in parallel.
 
 Parameters
 ----------
-pixcrd : double array[ncoord][nelem]
-    Array of pixel coordinates.
+pixcrd : numpy.ndarray
+    Array of pixel coordinates as ``double array[ncoord][nelem]``.
 
-{0}
+{}
 
 Returns
 -------
-world : double array[ncoord][nelem]
-    Returns an array of world coordinates.
+world : numpy.ndarray
+    Returns an array of world coordinates as ``double array[ncoord][nelem]``.
 
 Raises
 ------
@@ -87,7 +130,7 @@ InvalidTransformError
 
 InvalidTransformError
     Ill-conditioned coordinate transformation parameters.
-""".format(__.ORIGIN())
+""".format(ORIGIN())
 
 alt = """
 ``str`` Character code for alternate coordinate descriptions.
@@ -108,6 +151,18 @@ resized, without creating a new `~astropy.wcs.Sip` object.
 
 ap_order = """
 ``int`` (read-only) Order of the polynomial (``AP_ORDER``).
+"""
+
+aux = """
+`~astropy.wcs.Auxprm` Auxiliary coordinate system information of a specialist nature.
+"""
+
+Auxprm = """
+Class that contains auxiliary coordinate system information of a specialist
+nature.
+
+This class can not be constructed directly from Python, but instead is
+returned from `~astropy.wcs.Wcsprm.aux`.
 """
 
 axis_types = """
@@ -170,6 +225,27 @@ b_order = """
 ``int`` (read-only) Order of the polynomial (``B_ORDER``).
 """
 
+bounds_check = """
+bounds_check(pix2world, world2pix)
+
+Enable/disable bounds checking.
+
+Parameters
+----------
+pix2world : bool, optional
+    When `True`, enable bounds checking for the pixel-to-world (p2x)
+    transformations.  Default is `True`.
+
+world2pix : bool, optional
+    When `True`, enable bounds checking for the world-to-pixel (s2x)
+    transformations.  Default is `True`.
+
+Notes
+-----
+Note that by default (without calling `bounds_check`) strict bounds
+checking is enabled.
+"""
+
 bp = """
 ``double array[bp_order+1][bp_order+1]`` Focal plane to pixel
 transformation matrix.
@@ -188,7 +264,7 @@ cd = """
 matrix.
 
 For historical compatibility, three alternate specifications of the
-linear transforations are available in wcslib.  The canonical
+linear transformations are available in wcslib.  The canonical
 ``PCi_ja`` with ``CDELTia``, ``CDi_ja``, and the deprecated
 ``CROTAia`` keywords.  Although the latter may not formally co-exist
 with ``PCi_ja``, the approach here is simply to ignore them if given
@@ -274,6 +350,49 @@ relevant column number.
 It should be set to zero for an image header or pixel list.
 """
 
+compare = """
+compare(other, cmp=0, tolerance=0.0)
+
+Compare two Wcsprm objects for equality.
+
+Parameters
+----------
+
+other : Wcsprm
+    The other Wcsprm object to compare to.
+
+cmp : int, optional
+    A bit field controlling the strictness of the comparison.  When 0,
+    (the default), all fields must be identical.
+
+    The following constants may be or'ed together to loosen the
+    comparison.
+
+    - ``WCSCOMPARE_ANCILLARY``: Ignores ancillary keywords that don't
+      change the WCS transformation, such as ``DATE-OBS`` or
+      ``EQUINOX``.
+
+    - ``WCSCOMPARE_TILING``: Ignore integral differences in
+      ``CRPIXja``.  This is the 'tiling' condition, where two WCSes
+      cover different regions of the same map projection and align on
+      the same map grid.
+
+    - ``WCSCOMPARE_CRPIX``: Ignore any differences at all in
+      ``CRPIXja``.  The two WCSes cover different regions of the same
+      map projection but may not align on the same grid map.
+      Overrides ``WCSCOMPARE_TILING``.
+
+tolerance : float, optional
+    The amount of tolerance required.  For example, for a value of
+    1e-6, all floating-point values in the objects must be equal to
+    the first 6 decimal places.  The default value of 0.0 implies
+    exact equality.
+
+Returns
+-------
+equal : bool
+"""
+
 convert = """
 convert(array)
 
@@ -288,7 +407,7 @@ Has the dimensions::
 
     (K_M, ... K_2, K_1, M)
 
-(see `~astropy.wcs._astropy.wcs.Tabprm.K`) i.e. with the `M` dimension
+(see `~astropy.wcs.Tabprm.K`) i.e. with the `M` dimension
 varying fastest so that the `M` elements of a coordinate vector are
 stored contiguously in memory.
 """
@@ -316,12 +435,17 @@ crder = """
 An undefined value is represented by NaN.
 """
 
+crln_obs = """
+``double`` Carrington heliographic longitude of the observer (deg). If
+undefined, this is set to `None`.
+"""
+
 crota = """
 ``double array[naxis]`` ``CROTAia`` keyvalues for each coordinate
 axis.
 
 For historical compatibility, three alternate specifications of the
-linear transforations are available in wcslib.  The canonical
+linear transformations are available in wcslib.  The canonical
 ``PCi_ja`` with ``CDELTia``, ``CDi_ja``, and the deprecated
 ``CROTAia`` keywords.  Although the latter may not formally co-exist
 with ``PCi_ja``, the approach here is simply to ignore them if given
@@ -421,13 +545,13 @@ commonly used non-standard units specifications but this must be done
 as a separate step before invoking `~astropy.wcs.Wcsprm.set`.
 
 For celestial axes, if `~astropy.wcs.Wcsprm.cunit` is not blank,
-`~astropy.wcs.Wcsprm.set` uses `wcsunits` to parse it and scale
+`~astropy.wcs.Wcsprm.set` uses ``wcsunits`` to parse it and scale
 `~astropy.wcs.Wcsprm.cdelt`, `~astropy.wcs.Wcsprm.crval`, and
 `~astropy.wcs.Wcsprm.cd` to decimal degrees.  It then resets
 `~astropy.wcs.Wcsprm.cunit` to ``"deg"``.
 
 For spectral axes, if `~astropy.wcs.Wcsprm.cunit` is not blank,
-`~astropy.wcs.Wcsprm.set` uses `wcsunits` to parse it and scale
+`~astropy.wcs.Wcsprm.set` uses ``wcsunits`` to parse it and scale
 `~astropy.wcs.Wcsprm.cdelt`, `~astropy.wcs.Wcsprm.crval`, and
 `~astropy.wcs.Wcsprm.cd` to SI units.  It then resets
 `~astropy.wcs.Wcsprm.cunit` accordingly.
@@ -503,7 +627,7 @@ array.
 
 Array of interpolated indices into the coordinate array such that
 Upsilon_m, as defined in Paper III, is equal to
-(`~astropy.wcs._astropy.wcs.Tabprm.p0` [m] + 1) + delta[m].
+(`~astropy.wcs.Tabprm.p0` [m] + 1) + delta[m].
 """
 
 det2im = """
@@ -524,13 +648,13 @@ dims = """
 ``int array[ndim]`` (read-only)
 
 The dimensions of the tabular array
-`~astropy.wcs._astropy.wcs.Wtbarr.data`.
+`~astropy.wcs.Wtbarr.data`.
 """
 
 DistortionLookupTable = """
 DistortionLookupTable(*table*, *crpix*, *crval*, *cdelt*)
 
-Represents a single lookup table for a `Paper IV`_ distortion
+Represents a single lookup table for a `distortion paper`_
 transformation.
 
 Parameters
@@ -548,6 +672,11 @@ cdelt : 2-tuple
     The grid step size
 """
 
+dsun_obs = """
+``double`` Distance between the centre of the Sun and the observer (m). If
+undefined, this is set to `None`.
+"""
+
 equinox = """
 ``double`` The equinox associated with dynamical equatorial or
 ecliptic coordinate systems.
@@ -559,15 +688,11 @@ An undefined value is represented by NaN.
 """
 
 extlev = """
-``int`` (read-only)
-
-``EXTLEV`` identifying the binary table extension.
+``int`` (read-only) ``EXTLEV`` identifying the binary table extension.
 """
 
 extnam = """
-``str`` (read-only)
-
-``EXTNAME`` identifying the binary table extension.
+``str`` (read-only) ``EXTNAME`` identifying the binary table extension.
 """
 
 extrema = """
@@ -579,16 +704,14 @@ dimensions::
 
     (K_M, ... K_2, 2, M)
 
-(see `~astropy.wcs._astropy.wcs.Tabprm.K`).  The minimum is recorded
+(see `~astropy.wcs.Tabprm.K`).  The minimum is recorded
 in the first element of the compressed K_1 dimension, then the
 maximum.  This array is used by the inverse table lookup function to
 speed up table searches.
 """
 
 extver = """
-``int`` (read-only)
-
-``EXTVER`` identifying the binary table extension.
+``int`` (read-only) ``EXTVER`` identifying the binary table extension.
 """
 
 find_all_wcs = """
@@ -628,7 +751,7 @@ keysel : sequence of flags
 
 Returns
 -------
-wcs_list : list of `~astropy.wcs._astropy.wcs.Wcsprm` objects
+wcs_list : list of `~astropy.wcs.Wcsprm` objects
 """
 
 fix = """
@@ -642,8 +765,9 @@ Applies all of the corrections handled separately by
 Parameters
 ----------
 
-translate_units : str
-    Do potentially unsafe translations of non-standard unit strings.
+translate_units : str, optional
+    Specify which potentially unsafe translations of non-standard unit
+    strings to perform.  By default, performs all.
 
     Although ``"S"`` is commonly used to represent seconds, its
     translation to ``"s"`` is potentially unsafe since the standard
@@ -663,7 +787,7 @@ translate_units : str
     Thus ``''`` doesn't do any unsafe translations, whereas ``'shd'``
     does all of them.
 
-naxis : int array[naxis]
+naxis : int array[naxis], optional
     Image axis lengths.  If this array is set to zero or ``None``,
     then `~astropy.wcs.Wcsprm.cylfix` will not be invoked.
 
@@ -700,9 +824,9 @@ coordinate : coordinate pair
 """
 
 get_cdelt = """
-get_cdelt() -> double array[naxis]
+get_cdelt() -> numpy.ndarray
 
-Coordinate increments (``CDELTia``) for each coord axis.
+Coordinate increments (``CDELTia``) for each coord axis as ``double array[naxis]``.
 
 Returns the ``CDELT`` offsets in read-only form.  Unlike the
 `~astropy.wcs.Wcsprm.cdelt` property, this works even when the header
@@ -713,9 +837,9 @@ specified in the header.
 """
 
 get_pc = """
-get_pc() -> double array[naxis][naxis]
+get_pc() -> numpy.ndarray
 
-Returns the ``PC`` matrix in read-only form.  Unlike the
+Returns the ``PC`` matrix in read-only form as ``double array[naxis][naxis]``.  Unlike the
 `~astropy.wcs.Wcsprm.pc` property, this works even when the header
 specifies the linear transformation matrix in one of the alternative
 ``CDi_ja`` or ``CROTAia`` forms.  This is useful when you want access
@@ -724,13 +848,13 @@ specified in the header.
 """
 
 get_ps = """
-get_ps() -> list of tuples
+get_ps() -> list
 
-Returns ``PSi_ma`` keywords for each *i* and *m*.
+Returns ``PSi_ma`` keywords for each *i* and *m* as list of tuples.
 
 Returns
 -------
-ps : list of tuples
+ps : list
 
     Returned as a list of tuples of the form (*i*, *m*, *value*):
 
@@ -746,9 +870,9 @@ astropy.wcs.Wcsprm.set_ps : Set ``PSi_ma`` values
 """
 
 get_pv = """
-get_pv() -> list of tuples
+get_pv() -> list
 
-Returns ``PVi_ma`` keywords for each *i* and *m*.
+Returns ``PVi_ma`` keywords for each *i* and *m* as list of tuples.
 
 Returns
 -------
@@ -854,17 +978,18 @@ Alias for `~astropy.wcs.Wcsprm.has_pc`.  Maintained for backward
 compatibility.
 """
 
-have = """
-``string`` The name of the unit being converted from.
+hgln_obs = """
+``double`` Stonyhurst heliographic longitude of the observer. If
+undefined, this is set to `None`.
+"""
 
-This value always uses standard unit names, even if the
-`UnitConverter` was initialized with a non-standard unit name.
+hglt_obs = """
+``double``  Heliographic latitude (Carrington or Stonyhurst) of the observer
+(deg). If undefined, this is set to `None`.
 """
 
 i = """
-``int`` (read-only)
-
-Image axis number.
+``int`` (read-only) Image axis number.
 """
 
 imgpix_matrix = """
@@ -891,9 +1016,9 @@ the coordinate array and of each indexing vector.
 """
 
 kind = """
-``str`` (read-only)
+``str`` (read-only) ``wcstab`` array type.
 
-Character identifying the wcstab array type:
+Character identifying the ``wcstab`` array type:
 
     - ``'c'``: coordinate array,
     - ``'i'``: index vector.
@@ -940,15 +1065,13 @@ M = """
 """
 
 m = """
-``int`` (read-only)
-
-Array axis number for index vectors.
+``int`` (read-only) ``wcstab`` axis number for index vectors.
 """
 
 map = """
 ``int array[M]`` Association between axes.
 
-A vector of length `~astropy.wcs._astropy.wcs.Tabprm.M` that defines
+A vector of length `~astropy.wcs.Tabprm.M` that defines
 the association between axis *m* in the *M*-dimensional coordinate
 array (1 <= *m* <= *M*) and the indices of the intermediate world
 coordinate and world coordinate arrays.
@@ -1005,18 +1128,18 @@ viter : int
     the search recommenced.  *viter* controls how many times the step
     size is halved.  The allowed range is 5 - 10.
 
-world : double array[naxis]
-    World coordinate elements.  ``world[self.lng]`` and
+world : numpy.ndarray
+    World coordinate elements as ``double array[naxis]``.  ``world[self.lng]`` and
     ``world[self.lat]`` are the celestial longitude and latitude, in
     degrees.  Which is given and which returned depends on the value
     of *mixcel*.  All other elements are given.  The results will be
     written to this array in-place.
 
-pixcrd : double array[naxis].
-    Pixel coordinates.  The element indicated by *mixpix* is given and
+pixcrd : numpy.ndarray
+    Pixel coordinates as ``double array[naxis]``.  The element indicated by *mixpix* is given and
     the remaining elements will be written in-place.
 
-{0}
+{}
 
 Returns
 -------
@@ -1024,20 +1147,20 @@ result : dict
 
     Returns a dictionary with the following keys:
 
-    - *phi* (double array[naxis])
+    - *phi* (``double array[naxis]``)
 
-    - *theta* (double array[naxis])
+    - *theta* (``double array[naxis]``)
 
         - Longitude and latitude in the native coordinate system of
           the projection, in degrees.
 
-    - *imgcrd* (double array[naxis])
+    - *imgcrd* (``double array[naxis]``)
 
         - Image coordinate elements.  ``imgcrd[self.lng]`` and
           ``imgcrd[self.lat]`` are the projected *x*- and
           *y*-coordinates, in decimal degrees.
 
-    - *world* (double array[naxis])
+    - *world* (``double array[naxis]``)
 
         - Another reference to the *world* argument passed in.
 
@@ -1102,7 +1225,7 @@ Because of its generality, `~astropy.wcs.Wcsprm.mix` is very
 compute-intensive.  For compute-limited applications, more efficient
 special-case solvers could be written for simple projections, for
 example non-oblique cylindrical projections.
-""".format(__.ORIGIN())
+""".format(ORIGIN())
 
 mjdavg = """
 ``double`` Modified Julian Date corresponding to ``DATE-AVG``.
@@ -1167,9 +1290,7 @@ product K_1 * K_2 * ... * K_M.
 """
 
 ndim = """
-``int`` (read-only)
-
-Expected dimensionality of the wcstab array.
+``int`` (read-only) Expected dimensionality of the ``wcstab`` array.
 """
 
 obsgeo = """
@@ -1181,14 +1302,10 @@ reference frame.
 An undefined value is represented by NaN.
 """
 
-offset = """
-``double`` The offset of the unit conversion.
-"""
-
 p0 = """
 ``int array[M]`` Interpolated indices into the coordinate array.
 
-Vector of length `~astropy.wcs._astropy.wcs.Tabprm.M` of interpolated
+Vector of length `~astropy.wcs.Tabprm.M` of interpolated
 indices into the coordinate array such that Upsilon_m, as defined in
 Paper III, is equal to ``(p0[m] + 1) + delta[m]``.
 """
@@ -1201,42 +1318,44 @@ Converts pixel to world coordinates.
 Parameters
 ----------
 
-pixcrd : double array[ncoord][nelem]
-    Array of pixel coordinates.
+pixcrd : numpy.ndarray
+    Array of pixel coordinates as ``double array[ncoord][nelem]``.
 
-{0}
+{}
 
 Returns
 -------
 result : dict
     Returns a dictionary with the following keys:
 
-    - *imgcrd*: double array[ncoord][nelem]
+    - *imgcrd*: numpy.ndarray
 
-      - Array of intermediate world coordinates.  For celestial axes,
+      - Array of intermediate world coordinates as ``double array[ncoord][nelem]``.  For celestial axes,
         ``imgcrd[][self.lng]`` and ``imgcrd[][self.lat]`` are the
         projected *x*-, and *y*-coordinates, in pseudo degrees.  For
         spectral axes, ``imgcrd[][self.spec]`` is the intermediate
         spectral coordinate, in SI units.
 
-    - *phi*: double array[ncoord]
+    - *phi*: numpy.ndarray
 
-    - *theta*: double array[ncoord]
+      - Array as ``double array[ncoord]``.
+
+    - *theta*: numpy.ndarray
 
       - Longitude and latitude in the native coordinate system of the
-        projection, in degrees.
+        projection, in degrees, as ``double array[ncoord]``.
 
-    - *world*: double array[ncoord][nelem]
+    - *world*: numpy.ndarray
 
-      - Array of world coordinates.  For celestial axes,
+      - Array of world coordinates as ``double array[ncoord][nelem]``.  For celestial axes,
         ``world[][self.lng]`` and ``world[][self.lat]`` are the
         celestial longitude and latitude, in degrees.  For spectral
         axes, ``world[][self.spec]`` is the intermediate spectral
         coordinate, in SI units.
 
-    - *stat*: int array[ncoord]
+    - *stat*: numpy.ndarray
 
-      - Status return value for each coordinate. ``0`` for success,
+      - Status return value for each coordinate as ``int array[ncoord]``. ``0`` for success,
         ``1+`` for invalid pixel coordinate.
 
 Raises
@@ -1266,26 +1385,26 @@ InvalidTransformError
 See also
 --------
 astropy.wcs.Wcsprm.lat, astropy.wcs.Wcsprm.lng
-    Definition of the latitude andlongitude axes
-""".format(__.ORIGIN())
+    Definition of the latitude and longitude axes
+""".format(ORIGIN())
 
 p4_pix2foc = """
-p4_pix2foc(*pixcrd, origin*) -> double array[ncoord][nelem]
+p4_pix2foc(*pixcrd, origin*) -> ``double array[ncoord][nelem]``
 
-Convert pixel coordinates to focal plane coordinates using `Paper IV`_
-lookup-table distortion correction.
+Convert pixel coordinates to focal plane coordinates using `distortion
+paper`_ lookup-table correction.
 
 Parameters
 ----------
-pixcrd : double array[ncoord][nelem].
-    Array of pixel coordinates.
+pixcrd : numpy.ndarray
+    Array of pixel coordinates as ``double array[ncoord][nelem]``.
 
-{0}
+{}
 
 Returns
 -------
-foccrd : double array[ncoord][nelem]
-    Returns an array of focal plane coordinates.
+foccrd : numpy.ndarray
+    Returns an array of focal plane coordinates as ``double array[ncoord][nelem]``.
 
 Raises
 ------
@@ -1294,7 +1413,7 @@ MemoryError
 
 ValueError
     Invalid coordinate transformation parameters.
-""".format(__.ORIGIN())
+""".format(ORIGIN())
 
 pc = """
 ``double array[naxis][naxis]`` The ``PCi_ja`` (pixel coordinate)
@@ -1306,7 +1425,7 @@ The order is::
    [PC2_1, PC2_2]]
 
 For historical compatibility, three alternate specifications of the
-linear transforations are available in wcslib.  The canonical
+linear transformations are available in wcslib.  The canonical
 ``PCi_ja`` with ``CDELTia``, ``CDi_ja``, and the deprecated
 ``CROTAia`` keywords.  Although the latter may not formally co-exist
 with ``PCi_ja``, the approach here is simply to ignore them if given
@@ -1338,22 +1457,22 @@ astropy.wcs.Wcsprm.theta0
 """
 
 pix2foc = """
-pix2foc(*pixcrd, origin*) -> double array[ncoord][nelem]
+pix2foc(*pixcrd, origin*) -> ``double array[ncoord][nelem]``
 
-Perform both `SIP`_ polynomial and `Paper IV`_ lookup-table distortion
+Perform both `SIP`_ polynomial and `distortion paper`_ lookup-table
 correction in parallel.
 
 Parameters
 ----------
-pixcrd : double array[ncoord][nelem]
-    Array of pixel coordinates.
+pixcrd : numpy.ndarray
+    Array of pixel coordinates as ``double array[ncoord][nelem]``.
 
-{0}
+{}
 
 Returns
 -------
-foccrd : double array[ncoord][nelem]
-    Returns an array of focal plane coordinates.
+foccrd : numpy.ndarray
+    Returns an array of focal plane coordinates as ``double array[ncoord][nelem]``.
 
 Raises
 ------
@@ -1362,15 +1481,11 @@ MemoryError
 
 ValueError
     Invalid coordinate transformation parameters.
-""".format(__.ORIGIN())
+""".format(ORIGIN())
 
 piximg_matrix = """
 ``double array[2][2]`` (read-only) Matrix containing the product of
 the ``CDELTia`` diagonal matrix and the ``PCi_ja`` matrix.
-"""
-
-power = """
-``double`` The exponent of the unit conversion.
 """
 
 print_contents = """
@@ -1386,8 +1501,18 @@ To get a string of the contents, use `repr`.
 print_contents_tabprm = """
 print_contents()
 
-Print the contents of the `~astropy.wcs._astropy.wcs.Tabprm` object to
+Print the contents of the `~astropy.wcs.Tabprm` object to
 stdout.  Probably only useful for debugging purposes, and may be
+removed in the future.
+
+To get a string of the contents, use `repr`.
+"""
+
+print_contents_wtbarr = """
+print_contents()
+
+Print the contents of the `~astropy.wcs.Wtbarr` object to
+stdout. Probably only useful for debugging purposes, and may be
 removed in the future.
 
 To get a string of the contents, use `repr`.
@@ -1411,9 +1536,12 @@ An undefined value is represented by NaN.
 """
 
 row = """
-``int`` (read-only)
+``int`` (read-only) Table row number.
+"""
 
-Table row number.
+rsun_ref = """
+``double`` Reference radius of the Sun used in coordinate calculations (m).
+If undefined, this is set to `None`.
 """
 
 s2p = """
@@ -1423,24 +1551,24 @@ Transforms world coordinates to pixel coordinates.
 
 Parameters
 ----------
-world : double array[ncoord][nelem]
-    Array of world coordinates, in decimal degrees.
+world : numpy.ndarray
+    Array of world coordinates, in decimal degrees, as ``double array[ncoord][nelem]``.
 
-{0}
+{}
 
 Returns
 -------
 result : dict
     Returns a dictionary with the following keys:
 
-    - *phi*: double array[ncoord]
+    - *phi*: ``double array[ncoord]``
 
-    - *theta*: double array[ncoord]
+    - *theta*: ``double array[ncoord]``
 
         - Longitude and latitude in the native coordinate system of
           the projection, in degrees.
 
-    - *imgcrd*: double array[ncoord][nelem]
+    - *imgcrd*: ``double array[ncoord][nelem]``
 
        - Array of intermediate world coordinates.  For celestial axes,
          ``imgcrd[][self.lng]`` and ``imgcrd[][self.lat]`` are the
@@ -1450,12 +1578,12 @@ result : dict
          spectral axes, ``imgcrd[][self.spec]`` is the intermediate
          spectral coordinate, in SI units.
 
-    - *pixcrd*: double array[ncoord][nelem]
+    - *pixcrd*: ``double array[ncoord][nelem]``
 
         - Array of pixel coordinates.  Pixel coordinates are
           zero-based.
 
-    - *stat*: int array[ncoord]
+    - *stat*: ``int array[ncoord]``
 
         - Status return value for each coordinate. ``0`` for success,
           ``1+`` for invalid pixel coordinate.
@@ -1484,16 +1612,12 @@ See also
 --------
 astropy.wcs.Wcsprm.lat, astropy.wcs.Wcsprm.lng
     Definition of the latitude and longitude axes
-""".format(__.ORIGIN())
-
-scale = """
-``double`` The scaling factor for the unit conversion.
-"""
+""".format(ORIGIN())
 
 sense = """
 ``int array[M]`` +1 if monotonically increasing, -1 if decreasing.
 
-A vector of length `~astropy.wcs._astropy.wcs.Tabprm.M` whose elements
+A vector of length `~astropy.wcs.Tabprm.M` whose elements
 indicate whether the corresponding indexing vector is monotonically
 increasing (+1), or decreasing (-1).
 """
@@ -1562,9 +1686,9 @@ InvalidTabularParameters
 """
 
 set_ps = """
-set_ps(list)
+set_ps(ps)
 
-Sets `PSi_ma` keywords for each *i* and *m*.
+Sets ``PSi_ma`` keywords for each *i* and *m*.
 
 Parameters
 ----------
@@ -1585,13 +1709,13 @@ astropy.wcs.Wcsprm.get_ps
 """
 
 set_pv = """
-set_pv(list)
+set_pv(pv)
 
-Sets `PVi_ma` keywords for each *i* and *m*.
+Sets ``PVi_ma`` keywords for each *i* and *m*.
 
 Parameters
 ----------
-pv : list of tuples
+pv : list of tuple
 
     The input must be a sequence of tuples of the form (*i*, *m*,
     *value*):
@@ -1620,24 +1744,24 @@ using the `SIP`_ convention in both directions.
 
 Parameters
 ----------
-a : double array[m+1][m+1]
-    The ``A_i_j`` polynomial for pixel to focal plane transformation.
+a : numpy.ndarray
+    The ``A_i_j`` polynomial for pixel to focal plane transformation as ``double array[m+1][m+1]``.
     Its size must be (*m* + 1, *m* + 1) where *m* = ``A_ORDER``.
 
-b : double array[m+1][m+1]
-    The ``B_i_j`` polynomial for pixel to focal plane transformation.
+b : numpy.ndarray
+    The ``B_i_j`` polynomial for pixel to focal plane transformation as ``double array[m+1][m+1]``.
     Its size must be (*m* + 1, *m* + 1) where *m* = ``B_ORDER``.
 
-ap : double array[m+1][m+1]
-    The ``AP_i_j`` polynomial for pixel to focal plane transformation.
+ap : numpy.ndarray
+    The ``AP_i_j`` polynomial for pixel to focal plane transformation as ``double array[m+1][m+1]``.
     Its size must be (*m* + 1, *m* + 1) where *m* = ``AP_ORDER``.
 
-bp : double array[m+1][m+1]
-    The ``BP_i_j`` polynomial for pixel to focal plane transformation.
+bp : numpy.ndarray
+    The ``BP_i_j`` polynomial for pixel to focal plane transformation as ``double array[m+1][m+1]``.
     Its size must be (*m* + 1, *m* + 1) where *m* = ``BP_ORDER``.
 
-crpix : double array[2]
-    The reference pixel.
+crpix : numpy.ndarray
+    The reference pixel as ``double array[2]``.
 
 Notes
 -----
@@ -1647,22 +1771,22 @@ Headers."  ADASS XIV.
 """
 
 sip_foc2pix = """
-sip_foc2pix(*foccrd, origin*) -> double array[ncoord][nelem]
+sip_foc2pix(*foccrd, origin*) -> ``double array[ncoord][nelem]``
 
 Convert focal plane coordinates to pixel coordinates using the `SIP`_
 polynomial distortion convention.
 
 Parameters
 ----------
-foccrd : double array[ncoord][nelem]
-    Array of focal plane coordinates.
+foccrd : numpy.ndarray
+    Array of focal plane coordinates as ``double array[ncoord][nelem]``.
 
-{0}
+{}
 
 Returns
 -------
-pixcrd : double array[ncoord][nelem]
-    Returns an array of pixel coordinates.
+pixcrd : numpy.ndarray
+    Returns an array of pixel coordinates as ``double array[ncoord][nelem]``.
 
 Raises
 ------
@@ -1671,25 +1795,25 @@ MemoryError
 
 ValueError
     Invalid coordinate transformation parameters.
-""".format(__.ORIGIN())
+""".format(ORIGIN())
 
 sip_pix2foc = """
-sip_pix2foc(*pixcrd, origin*) -> double array[ncoord][nelem]
+sip_pix2foc(*pixcrd, origin*) -> ``double array[ncoord][nelem]``
 
 Convert pixel coordinates to focal plane coordinates using the `SIP`_
 polynomial distortion convention.
 
 Parameters
 ----------
-pixcrd : double array[ncoord][nelem]
-    Array of pixel coordinates.
+pixcrd : numpy.ndarray
+    Array of pixel coordinates as ``double array[ncoord][nelem]``.
 
-{0}
+{}
 
 Returns
 -------
-foccrd : double array[ncoord][nelem]
-    Returns an array of focal plane coordinates.
+foccrd : numpy.ndarray
+    Returns an array of focal plane coordinates as ``double array[ncoord][nelem]``.
 
 Raises
 ------
@@ -1698,7 +1822,7 @@ MemoryError
 
 ValueError
     Invalid coordinate transformation parameters.
-""".format(__.ORIGIN())
+""".format(ORIGIN())
 
 spcfix = """
 spcfix() -> int
@@ -1735,7 +1859,7 @@ vice versa.
 
 Parameters
 ----------
-ctype : string
+ctype : str
     Required spectral ``CTYPEia``, maximum of 8 characters.  The first
     four characters are required to be given and are never modified.
     The remaining four, the algorithm code, are completely determined
@@ -1883,13 +2007,13 @@ for example::
       -(WCSSUB_SPECTRAL | WCSSUB_STOKES)])
 
 The last of these specifies all axis types other than spectral or
-Stokes.  Extraction is done in the order specified by `axes`, i.e. a
+Stokes.  Extraction is done in the order specified by ``axes``, i.e. a
 longitude axis (if present) would be extracted first (via ``axes[0]``)
 and not subsequently (via ``axes[3]``).  Likewise for the latitude and
 cubeface axes in this example.
 
 The number of dimensions in the returned object may be less than or
-greater than the length of `axes`.  However, it will never exceed the
+greater than the length of ``axes``.  However, it will never exceed the
 number of axes in the input image.
 """
 
@@ -1944,7 +2068,7 @@ number of respects:
 
     2. Deprecated (e.g. ``CROTAn``) or non-standard usage will be
        translated to standard (this is partially dependent on whether
-       `fix` was applied).
+       ``fix`` was applied).
 
     3. Quantities will be converted to the units used internally,
        basically SI with the addition of degrees.
@@ -1967,7 +2091,7 @@ number of respects:
 
 Keywords can be translated between the image array, binary table, and
 pixel lists forms by manipulating the `~astropy.wcs.Wcsprm.colnum` or
-`~astropy.wcs.Wcsprm.colax` members of the `~astropy.wcs.Wcsprm.WCS`
+`~astropy.wcs.Wcsprm.colax` members of the `~astropy.wcs.WCS`
 object.
 
 Parameters
@@ -1992,101 +2116,8 @@ header : str
 """
 
 ttype = """
-``str`` (read-only)
-
-``TTYPEn`` identifying the column of the binary table that contains
+``str`` (read-only) ``TTYPEn`` identifying the column of the binary table that contains
 the wcstab array.
-"""
-
-UnitConverter = """
-UnitConverter(have, want, translate_units='')
-
-An object for converting from one system of units to another.
-
-Use the returned object's `~astropy.wcs.UnitConverter.convert` method
-to convert values from *have* to *want*.
-
-This function is permissive in accepting whitespace in all contexts in
-a units specification where it does not create ambiguity (e.g. not
-between a metric prefix and a basic unit string), including in strings
-like ``"log (m ** 2)"`` which is formally disallowed.
-
-.. note:: Deprecated in Astropy 0.2
-
-   `UnitConverter` will be removed in a future version of astropy.
-   The `astropy.units` package should be used instead.
-
-Parameters
-----------
-
-have : string
-    FITS unit string to convert from, with or without surrounding
-    square brackets (for inline specifications); text following the
-    closing bracket is ignored.
-
-want : string
-    FITS unit string to convert to, with or without surrounding square
-    brackets (for inline specifications); text following the closing
-    bracket is ignored.
-
-ctrl : string, optional
-    Do potentially unsafe translations of non-standard unit strings.
-
-    Although ``\"S\"`` is commonly used to represent seconds, its
-    recognizes ``\"S\"`` formally as Siemens, however rarely that may
-    be translation to ``\"s\"`` is potentially unsafe since the
-    standard used.  The same applies to ``\"H\"`` for hours (Henry),
-    and ``\"D\"`` for days (Debye).
-
-    This string controls what to do in such cases, and is
-    case-insensitive.
-
-    - If the string contains ``"s"``, translate ``"S"`` to ``"s"``.
-
-    - If the string contains ``"h"``, translate ``"H"`` to ``"h"``.
-
-    - If the string contains ``"d"``, translate ``"D"`` to ``"d"``.
-
-    Thus ``''`` doesn't do any unsafe translations, whereas ``'shd'``
-    does all of them.
-
-Raises
-------
-ValueError
-    Invalid numeric multiplier.
-
-SyntaxError
-    Dangling binary operator.
-
-SyntaxError
-    Invalid symbol in INITIAL context.
-
-SyntaxError
-    Function in invalid context.
-
-SyntaxError
-    Invalid symbol in EXPON context.
-
-SyntaxError
-    Unbalanced bracket.
-
-SyntaxError
-    Unbalanced parenthesis.
-
-SyntaxError
-    Consecutive binary operators.
-
-SyntaxError
-    Internal parser error.
-
-SyntaxError
-    Non-conformant unit specifications.
-
-SyntaxError
-    Non-conformant functions.
-
-ValueError
-    Potentially unsafe translation.
 """
 
 unitfix = """
@@ -2099,7 +2130,7 @@ whitespace.
 
 Parameters
 ----------
-translate_units : string, optional
+translate_units : str, optional
     Do potentially unsafe translations of non-standard unit strings.
 
     Although ``\"S\"`` is commonly used to represent seconds, its
@@ -2149,11 +2180,10 @@ See also
 astropy.wcs.Wcsprm.specsys, astropy.wcs.Wcsprm.ssysobs
 """
 
-want = """
-``string`` The name of the unit being converted to.
+velref = """
+``int`` AIPS velocity code.
 
-This value always uses standard unit names, even if the
-`UnitConverter` was initialized with a non-standard unit name.
+From ``VELREF`` keyword.
 """
 
 wcs = """
@@ -2165,10 +2195,10 @@ Wcs = """
 Wcs(*sip, cpdis, wcsprm, det2im*)
 
 Wcs objects amalgamate basic WCS (as provided by `wcslib`_), with
-`SIP`_ and `Paper IV`_ distortion operations.
+`SIP`_ and `distortion paper`_ operations.
 
-To perform all distortion corrections and WCS tranformation, use
-`all_pix2world`.
+To perform all distortion corrections and WCS transformation, use
+``all_pix2world``.
 
 Parameters
 ----------
@@ -2186,8 +2216,15 @@ det2im : A pair of `~astropy.wcs.DistortionLookupTable` objects, or
 Wcsprm = """
 Wcsprm(header=None, key=' ', relax=False, naxis=2, keysel=0, colsel=None)
 
-`~astropy.wcs.Wcsprm` is a direct wrapper around `wcslib`_.  It
-provides access to the core WCS transformations that it supports.
+`~astropy.wcs.Wcsprm` performs the core WCS transformations.
+
+.. note::
+    The members of this object correspond roughly to the key/value
+    pairs in the FITS header.  However, they are adjusted and
+    normalized in a number of ways that make performing the WCS
+    transformation easier.  Therefore, they can not be relied upon to
+    get the original values in the header.  For that, use
+    `astropy.io.fits.Header` directly.
 
 The FITS header parsing enforces correct FITS "keyword = value" syntax
 with regard to the equals sign occurring in columns 9 and 10.
@@ -2200,7 +2237,7 @@ Parameters
 header : An `astropy.io.fits.Header`, string, or `None`.
   If ``None``, the object will be initialized to default values.
 
-key : string, optional
+key : str, optional
     The key referring to a particular WCS transform in the header.
     This may be either ``' '`` or ``'A'``-``'Z'`` and corresponds to
     the ``\"a\"`` part of ``\"CTYPEia\"``.  (*key* may only be
@@ -2252,6 +2289,11 @@ KeyError
      Key not found in FITS header.
 """
 
+wtb = """
+``list of Wtbarr`` objects to construct coordinate lookup tables from BINTABLE.
+
+"""
+
 Wtbarr = """
 Classes to construct coordinate lookup tables from a binary table
 extension (BINTABLE).
@@ -2262,6 +2304,288 @@ returned from `~astropy.wcs.Wcsprm.wtb`.
 
 zsource = """
 ``double`` The redshift, ``ZSOURCEa``, of the source.
+
+An undefined value is represented by NaN.
+"""
+
+WcsError = """
+Base class of all invalid WCS errors.
+"""
+
+SingularMatrix = """
+SingularMatrixError()
+
+The linear transformation matrix is singular.
+"""
+
+InconsistentAxisTypes = """
+InconsistentAxisTypesError()
+
+The WCS header inconsistent or unrecognized coordinate axis type(s).
+"""
+
+InvalidTransform = """
+InvalidTransformError()
+
+The WCS transformation is invalid, or the transformation parameters
+are invalid.
+"""
+
+InvalidCoordinate = """
+InvalidCoordinateError()
+
+One or more of the world coordinates is invalid.
+"""
+
+NoSolution = """
+NoSolutionError()
+
+No solution can be found in the given interval.
+"""
+
+InvalidSubimageSpecification = """
+InvalidSubimageSpecificationError()
+
+The subimage specification is invalid.
+"""
+
+NonseparableSubimageCoordinateSystem = """
+NonseparableSubimageCoordinateSystemError()
+
+Non-separable subimage coordinate system.
+"""
+
+NoWcsKeywordsFound = """
+NoWcsKeywordsFoundError()
+
+No WCS keywords were found in the given header.
+"""
+
+InvalidTabularParameters = """
+InvalidTabularParametersError()
+
+The given tabular parameters are invalid.
+"""
+
+mjdbeg = """
+``double`` Modified Julian Date corresponding to ``DATE-BEG``.
+
+``(MJD = JD - 2400000.5)``.
+
+An undefined value is represented by NaN.
+
+See also
+--------
+astropy.wcs.Wcsprm.mjdbeg
+"""
+
+mjdend = """
+``double`` Modified Julian Date corresponding to ``DATE-END``.
+
+``(MJD = JD - 2400000.5)``.
+
+An undefined value is represented by NaN.
+
+See also
+--------
+astropy.wcs.Wcsprm.mjdend
+"""
+
+mjdref = """
+``double`` Modified Julian Date corresponding to ``DATE-REF``.
+
+``(MJD = JD - 2400000.5)``.
+
+An undefined value is represented by NaN.
+
+See also
+--------
+astropy.wcs.Wcsprm.dateref
+"""
+
+bepoch = """
+``double`` Equivalent to ``DATE-OBS``.
+
+Expressed as a Besselian epoch.
+
+See also
+--------
+astropy.wcs.Wcsprm.dateobs
+"""
+
+jepoch = """
+``double`` Equivalent to ``DATE-OBS``.
+
+Expressed as a Julian epoch.
+
+See also
+--------
+astropy.wcs.Wcsprm.dateobs
+"""
+
+datebeg = """
+``string`` Date at the start of the observation.
+
+In ISO format, ``yyyy-mm-ddThh:mm:ss``.
+
+See also
+--------
+astropy.wcs.Wcsprm.datebeg
+"""
+
+dateend = """
+``string`` Date at the end of the observation.
+
+In ISO format, ``yyyy-mm-ddThh:mm:ss``.
+
+See also
+--------
+astropy.wcs.Wcsprm.dateend
+"""
+
+dateref = """
+``string`` Date of a reference epoch relative to which
+other time measurements refer.
+
+See also
+--------
+astropy.wcs.Wcsprm.dateref
+"""
+
+timesys = """
+``string`` Time scale (UTC, TAI, etc.) in which all other time-related
+auxiliary header values are recorded. Also defines the time scale for
+an image axis with CTYPEia set to 'TIME'.
+
+See also
+--------
+astropy.wcs.Wcsprm.timesys
+"""
+
+trefpos = """
+``string`` Location in space where the recorded time is valid.
+
+See also
+--------
+astropy.wcs.Wcsprm.trefpos
+"""
+
+trefdir = """
+``string`` Reference direction used in calculating a pathlength delay.
+
+See also
+--------
+astropy.wcs.Wcsprm.trefdir
+"""
+
+timeunit = """
+``string`` Time units in which the following header values are expressed:
+``TSTART``, ``TSTOP``, ``TIMEOFFS``, ``TIMSYER``, ``TIMRDER``, ``TIMEDEL``.
+
+It also provides the default value for ``CUNITia`` for time axes.
+
+See also
+--------
+astropy.wcs.Wcsprm.trefdir
+"""
+
+plephem = """
+``string`` The Solar System ephemeris used for calculating a pathlength delay.
+
+See also
+--------
+astropy.wcs.Wcsprm.plephem
+"""
+
+tstart = """
+``double`` equivalent to DATE-BEG expressed as a time in units of TIMEUNIT relative to DATEREF+TIMEOFFS.
+
+See also
+--------
+astropy.wcs.Wcsprm.tstop
+"""
+
+tstop = """
+``double`` equivalent to DATE-END expressed as a time in units of TIMEUNIT relative to DATEREF+TIMEOFFS.
+
+See also
+--------
+astropy.wcs.Wcsprm.tstart
+"""
+
+telapse = """
+``double`` equivalent to the elapsed time between DATE-BEG and DATE-END, in units of TIMEUNIT.
+
+See also
+--------
+astropy.wcs.Wcsprm.tstart
+"""
+
+timeoffs = """
+``double`` Time offset, which may be used, for example, to provide a uniform clock correction
+           for times referenced to DATEREF.
+
+See also
+--------
+astropy.wcs.Wcsprm.timeoffs
+"""
+
+timsyer = """
+``double`` the absolute error of the time values, in units of TIMEUNIT.
+
+See also
+--------
+astropy.wcs.Wcsprm.timrder
+"""
+
+timrder = """
+``double`` the accuracy of time stamps relative to each other, in units of TIMEUNIT.
+
+See also
+--------
+astropy.wcs.Wcsprm.timsyer
+"""
+
+timedel = """
+``double`` the resolution of the time stamps.
+
+See also
+--------
+astropy.wcs.Wcsprm.timedel
+"""
+
+timepixr = """
+``double`` relative position of the time stamps in binned time intervals, a value between 0.0 and 1.0.
+
+See also
+--------
+astropy.wcs.Wcsprm.timepixr
+"""
+
+obsorbit = """
+``string`` URI, URL, or name of an orbit ephemeris file giving spacecraft coordinates relating to TREFPOS.
+
+See also
+--------
+astropy.wcs.Wcsprm.trefpos
+
+"""
+xposure = """
+``double`` effective exposure time in units of TIMEUNIT.
+
+See also
+--------
+astropy.wcs.Wcsprm.timeunit
+"""
+
+czphs = """
+``double array[naxis]`` The time at the zero point of a phase axis, ``CSPHSia``.
+
+An undefined value is represented by NaN.
+"""
+
+cperi = """
+``double array[naxis]`` period of a phase axis, CPERIia.
 
 An undefined value is represented by NaN.
 """

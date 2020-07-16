@@ -6,5 +6,6 @@ See the `Astropy documentation
 <http://docs.astropy.org/en/latest/cosmology/index.html>`_ for more
 detailed usage examples and references.
 """
-from core import *
-from funcs import *
+
+from .core import *
+from .funcs import *

@@ -5,36 +5,47 @@
 Handles the "Unicode" unit format.
 """
 
-from __future__ import (absolute_import, division, print_function,
-                        unicode_literals)
 
-from . import console
+from . import console, utils
 
 
 class Unicode(console.Console):
     """
-    Output-only format for to display pretty formatting at the console
+    Output-only format to display pretty formatting at the console
     using Unicode characters.
 
     For example::
 
-      >>> print u.Ry.decompose().to_string('unicode')
-                 m² kg
-      2.18×10-¹⁸ ─────
-                  s²
+      >>> import astropy.units as u
+      >>> print(u.bar.decompose().to_string('unicode'))
+              kg
+      100000 ────
+             m s²
     """
-
-    def __init__(self):
-        pass
 
     _times = "×"
     _line = "─"
 
-    def _get_unit_name(self, unit):
+    @classmethod
+    def _get_unit_name(cls, unit):
         return unit.get_format_name('unicode')
 
-    @staticmethod
-    def _format_superscript(number):
+    @classmethod
+    def format_exponential_notation(cls, val):
+        m, ex = utils.split_mantissa_exponent(val)
+
+        parts = []
+        if m:
+            parts.append(m.replace('-', '−'))
+
+        if ex:
+            parts.append("10{}".format(
+                cls._format_superscript(ex)))
+
+        return cls._times.join(parts)
+
+    @classmethod
+    def _format_superscript(cls, number):
         mapping = {
             '0': '⁰',
             '1': '¹',
@@ -46,7 +57,12 @@ class Unicode(console.Console):
             '7': '⁷',
             '8': '⁸',
             '9': '⁹',
-            '-': '⁻'}
+            '-': '⁻',
+            '−': '⁻',
+            # This is actually a "raised omission bracket", but it's
+            # the closest thing I could find to a superscript solidus.
+            '/': '⸍',
+            }
         output = []
         for c in number:
             output.append(mapping[c])

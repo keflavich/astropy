@@ -3,21 +3,25 @@
          mdroe@stsci.edu
 */
 
-#include "astropy_wcs.h"
-#include "wcslib_wrap.h"
-#include "wcslib_tabprm_wrap.h"
-#include "wcslib_units_wrap.h"
-#include "wcslib_wtbarr_wrap.h"
-#include "distortion_wrap.h"
-#include "sip_wrap.h"
-#include "docstrings.h"
-#include "astropy_wcs_api.h"
-#include "unit_list_proxy.h"
+#include "astropy_wcs/astropy_wcs.h"
+#include "astropy_wcs/wcslib_wrap.h"
+#include "astropy_wcs/wcslib_tabprm_wrap.h"
+#include "astropy_wcs/wcslib_auxprm_wrap.h"
+#include "astropy_wcs/wcslib_units_wrap.h"
+#include "astropy_wcs/wcslib_wtbarr_wrap.h"
+#include "astropy_wcs/distortion_wrap.h"
+#include "astropy_wcs/sip_wrap.h"
+#include "astropy_wcs/docstrings.h"
+#include "astropy_wcs/astropy_wcs_api.h"
+#include "astropy_wcs/unit_list_proxy.h"
 
 #include <structmember.h> /* from Python */
 
 #include <stdlib.h>
 #include <time.h>
+
+#include <tab.h>
+#include <wtbarr.h>
 
 /***************************************************************************
  * Wcs type
@@ -26,6 +30,22 @@
 static PyTypeObject WcsType;
 
 static int _setup_wcs_type(PyObject* m);
+
+
+PyObject* PyWcsprm_set_wtbarr_fitsio_callback(PyObject *dummy, PyObject *args) {
+    PyObject *callback;
+
+    if (PyArg_ParseTuple(args, "O:set_wtbarr_fitsio_callback", &callback)) {
+        if (!PyCallable_Check(callback)) {
+            PyErr_SetString(PyExc_TypeError, "parameter must be callable");
+            return NULL;
+        }
+        _set_wtbarr_callback(callback);
+
+        Py_RETURN_NONE;
+    }
+    return NULL;
+}
 
 
 /***************************************************************************
@@ -52,31 +72,12 @@ static int
 Wcs_clear(
     Wcs* self) {
 
-  PyObject* tmp;
-
-  tmp = self->py_det2im[0];
-  self->py_det2im[0] = NULL;
-  Py_XDECREF(tmp);
-
-  tmp = self->py_det2im[1];
-  self->py_det2im[1] = NULL;
-  Py_XDECREF(tmp);
-
-  tmp = self->py_sip;
-  self->py_sip = NULL;
-  Py_XDECREF(tmp);
-
-  tmp = self->py_distortion_lookup[0];
-  self->py_distortion_lookup[0] = NULL;
-  Py_XDECREF(tmp);
-
-  tmp = self->py_distortion_lookup[1];
-  self->py_distortion_lookup[1] = NULL;
-  Py_XDECREF(tmp);
-
-  tmp = self->py_wcsprm;
-  self->py_wcsprm = NULL;
-  Py_XDECREF(tmp);
+  Py_CLEAR(self->py_det2im[0]);
+  Py_CLEAR(self->py_det2im[1]);
+  Py_CLEAR(self->py_sip);
+  Py_CLEAR(self->py_distortion_lookup[0]);
+  Py_CLEAR(self->py_distortion_lookup[1]);
+  Py_CLEAR(self->py_wcsprm);
 
   return 0;
 }
@@ -85,6 +86,7 @@ static void
 Wcs_dealloc(
     Wcs* self) {
 
+  PyObject_GC_UnTrack(self);
   Wcs_clear(self);
   pipeline_free(&self->x);
   Py_TYPE(self)->tp_free((PyObject*)self);
@@ -142,7 +144,9 @@ Wcs_init(
         return -1;
       }
 
+      Py_CLEAR(self->py_det2im[i]);
       self->py_det2im[i] = py_det2im[i];
+      Py_INCREF(py_det2im[i]);
       self->x.det2im[i] = &(((PyDistLookup*)py_det2im[i])->x);
     }
   }
@@ -155,7 +159,9 @@ Wcs_init(
       return -1;
     }
 
+    Py_CLEAR(self->py_sip);
     self->py_sip = py_sip;
+    Py_INCREF(py_sip);
     self->x.sip = &(((PySip*)py_sip)->x);
   }
 
@@ -168,7 +174,9 @@ Wcs_init(
         return -1;
       }
 
+      Py_CLEAR(self->py_distortion_lookup[i]);
       self->py_distortion_lookup[i] = py_distortion_lookup[i];
+      Py_INCREF(py_distortion_lookup[i]);
       self->x.cpdis[i] = &(((PyDistLookup*)py_distortion_lookup[i])->x);
     }
   }
@@ -181,16 +189,11 @@ Wcs_init(
       return -1;
     }
 
+    Py_CLEAR(self->py_wcsprm);
     self->py_wcsprm = py_wcsprm;
+    Py_INCREF(py_wcsprm);
     self->x.wcs = &(((PyWcsprm*)py_wcsprm)->x);
   }
-
-  Py_XINCREF(self->py_sip);
-  Py_XINCREF(self->py_distortion_lookup[0]);
-  Py_XINCREF(self->py_distortion_lookup[1]);
-  Py_XINCREF(self->py_wcsprm);
-  Py_XINCREF(self->py_det2im[0]);
-  Py_XINCREF(self->py_det2im[1]);
 
   return 0;
 }
@@ -218,7 +221,7 @@ Wcs_all_pix2world(
 
   naxis = self->x.wcs->naxis;
 
-  pixcrd = (PyArrayObject*)PyArray_ContiguousFromAny(pixcrd_obj, PyArray_DOUBLE, 2, 2);
+  pixcrd = (PyArrayObject*)PyArray_ContiguousFromAny(pixcrd_obj, NPY_DOUBLE, 2, 2);
   if (pixcrd == NULL) {
     return NULL;
   }
@@ -231,7 +234,7 @@ Wcs_all_pix2world(
     goto exit;
   }
 
-  world = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(pixcrd), PyArray_DOUBLE);
+  world = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(pixcrd), NPY_DOUBLE);
   if (world == NULL) {
     goto exit;
   }
@@ -298,7 +301,7 @@ Wcs_p4_pix2foc(
     return pixcrd_obj;
   }
 
-  pixcrd = (PyArrayObject*)PyArray_ContiguousFromAny(pixcrd_obj, PyArray_DOUBLE, 2, 2);
+  pixcrd = (PyArrayObject*)PyArray_ContiguousFromAny(pixcrd_obj, NPY_DOUBLE, 2, 2);
   if (pixcrd == NULL) {
     return NULL;
   }
@@ -308,7 +311,7 @@ Wcs_p4_pix2foc(
     goto exit;
   }
 
-  foccrd = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(pixcrd), PyArray_DOUBLE);
+  foccrd = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(pixcrd), NPY_DOUBLE);
   if (foccrd == NULL) {
     status = 2;
     goto exit;
@@ -366,7 +369,7 @@ Wcs_det2im(
     return detcrd_obj;
   }
 
-  detcrd = (PyArrayObject*)PyArray_ContiguousFromAny(detcrd_obj, PyArray_DOUBLE, 2, 2);
+  detcrd = (PyArrayObject*)PyArray_ContiguousFromAny(detcrd_obj, NPY_DOUBLE, 2, 2);
   if (detcrd == NULL) {
     return NULL;
   }
@@ -376,7 +379,7 @@ Wcs_det2im(
     goto exit;
   }
 
-  imcrd = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(detcrd), PyArray_DOUBLE);
+  imcrd = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(detcrd), NPY_DOUBLE);
   if (imcrd == NULL) {
     status = 2;
     goto exit;
@@ -429,7 +432,7 @@ Wcs_pix2foc(
     return NULL;
   }
 
-  pixcrd = (PyArrayObject*)PyArray_ContiguousFromAny(pixcrd_obj, PyArray_DOUBLE, 2, 2);
+  pixcrd = (PyArrayObject*)PyArray_ContiguousFromAny(pixcrd_obj, NPY_DOUBLE, 2, 2);
   if (pixcrd == NULL) {
     return NULL;
   }
@@ -439,7 +442,7 @@ Wcs_pix2foc(
     goto _exit;
   }
 
-  foccrd = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(pixcrd), PyArray_DOUBLE);
+  foccrd = (PyArrayObject*)PyArray_SimpleNew(2, PyArray_DIMS(pixcrd), NPY_DOUBLE);
   if (foccrd == NULL) {
     goto _exit;
   }
@@ -493,8 +496,7 @@ Wcs_set_wcs(
     /*@shared@*/ PyObject* value,
     /*@unused@*/ void* closure) {
 
-  Py_XDECREF(self->py_wcsprm);
-  self->py_wcsprm = NULL;
+  Py_CLEAR(self->py_wcsprm);
   self->x.wcs = NULL;
 
   if (value != NULL && value != Py_None) {
@@ -532,8 +534,7 @@ Wcs_set_cpdis1(
     /*@shared@*/ PyObject* value,
     /*@unused@*/ void* closure) {
 
-  Py_XDECREF(self->py_distortion_lookup[0]);
-  self->py_distortion_lookup[0] = NULL;
+  Py_CLEAR(self->py_distortion_lookup[0]);
   self->x.cpdis[0] = NULL;
 
   if (value != NULL && value != Py_None) {
@@ -571,8 +572,7 @@ Wcs_set_cpdis2(
     /*@shared@*/ PyObject* value,
     /*@unused@*/ void* closure) {
 
-  Py_XDECREF(self->py_distortion_lookup[1]);
-  self->py_distortion_lookup[1] = NULL;
+  Py_CLEAR(self->py_distortion_lookup[1]);
   self->x.cpdis[1] = NULL;
 
   if (value != NULL && value != Py_None) {
@@ -610,8 +610,7 @@ Wcs_set_det2im1(
     /*@shared@*/ PyObject* value,
     /*@unused@*/ void* closure) {
 
-  Py_XDECREF(self->py_det2im[0]);
-  self->py_det2im[0] = NULL;
+  Py_CLEAR(self->py_det2im[0]);
   self->x.det2im[0] = NULL;
 
   if (value != NULL && value != Py_None) {
@@ -649,8 +648,7 @@ Wcs_set_det2im2(
     /*@shared@*/ PyObject* value,
     /*@unused@*/ void* closure) {
 
-  Py_XDECREF(self->py_det2im[1]);
-  self->py_det2im[1] = NULL;
+  Py_CLEAR(self->py_det2im[1]);
   self->x.det2im[1] = NULL;
 
   if (value != NULL && value != Py_None) {
@@ -688,8 +686,7 @@ Wcs_set_sip(
     /*@shared@*/ PyObject* value,
     /*@unused@*/ void* closure) {
 
-  Py_XDECREF(self->py_sip);
-  self->py_sip = NULL;
+  Py_CLEAR(self->py_sip);
   self->x.sip = NULL;
 
   if (value != NULL && value != Py_None) {
@@ -705,97 +702,6 @@ Wcs_set_sip(
   }
 
   return 0;
-}
-
-static PyObject*
-Wcs___copy__(
-    Wcs* self,
-    /*@unused@*/ PyObject* args,
-    /*@unused@*/ PyObject* kwds) {
-
-  PyObject* copy = NULL;
-
-  copy = Wcs_new(&WcsType, NULL, NULL);
-  if (copy == NULL) {
-    return NULL;
-  }
-
-  if (self->py_det2im[0]) {
-    Wcs_set_det2im1((Wcs*)copy, self->py_det2im[0], NULL);
-  }
-
-  if (self->py_det2im[1]) {
-    Wcs_set_det2im2((Wcs*)copy, self->py_det2im[1], NULL);
-  }
-
-  if (self->py_sip) {
-    Wcs_set_sip((Wcs*)copy, self->py_sip, NULL);
-  }
-
-  if (self->py_distortion_lookup[0]) {
-    Wcs_set_cpdis1((Wcs*)copy, self->py_distortion_lookup[0], NULL);
-  }
-
-  if (self->py_distortion_lookup[1]) {
-    Wcs_set_cpdis2((Wcs*)copy, self->py_distortion_lookup[1], NULL);
-  }
-
-  if (self->py_wcsprm) {
-    Wcs_set_wcs((Wcs*)copy, self->py_wcsprm, NULL);
-  }
-
-  return copy;
-}
-
-static int
-_deepcopy_helper(
-    Wcs* copy,
-    PyObject* item,
-    int (*function)(Wcs*, PyObject*, void*),
-    PyObject* memo) {
-  PyObject* obj_copy;
-
-  if (item) {
-    obj_copy = get_deepcopy(item, memo);
-    if (obj_copy == NULL) {
-      return 1;
-    }
-
-    if (function(copy, obj_copy, NULL)) {
-      Py_DECREF(obj_copy);
-      return 1;
-    }
-
-    Py_DECREF(obj_copy);
-  }
-
-  return 0;
-}
-
-static PyObject*
-Wcs___deepcopy__(
-    Wcs* self,
-    PyObject* memo,
-    /*@unused@*/ PyObject* kwds) {
-
-  Wcs*    copy;
-
-  copy = (Wcs*)Wcs_new(&WcsType, NULL, NULL);
-  if (copy == NULL) {
-    return NULL;
-  }
-
-  if (_deepcopy_helper(copy, self->py_det2im[0], Wcs_set_det2im1, memo) ||
-      _deepcopy_helper(copy, self->py_det2im[1], Wcs_set_det2im2, memo) ||
-      _deepcopy_helper(copy, self->py_sip, Wcs_set_sip, memo) ||
-      _deepcopy_helper(copy, self->py_distortion_lookup[0], Wcs_set_cpdis1, memo) ||
-      _deepcopy_helper(copy, self->py_distortion_lookup[1], Wcs_set_det2im1, memo) ||
-      _deepcopy_helper(copy, self->py_wcsprm, Wcs_set_wcs, memo)) {
-    Py_DECREF(copy);
-    return NULL;
-  }
-
-  return (PyObject*)copy;
 }
 
 static PyObject*
@@ -829,8 +735,6 @@ static PyGetSetDef Wcs_getset[] = {
 
 static PyMethodDef Wcs_methods[] = {
   {"_all_pix2world", (PyCFunction)Wcs_all_pix2world, METH_VARARGS|METH_KEYWORDS, doc_all_pix2world},
-  {"__copy__", (PyCFunction)Wcs___copy__, METH_NOARGS, NULL},
-  {"__deepcopy__", (PyCFunction)Wcs___deepcopy__, METH_O, NULL},
   {"_det2im", (PyCFunction)Wcs_det2im, METH_VARARGS|METH_KEYWORDS, doc_det2im},
   {"_p4_pix2foc", (PyCFunction)Wcs_p4_pix2foc, METH_VARARGS|METH_KEYWORDS, doc_p4_pix2foc},
   {"_pix2foc", (PyCFunction)Wcs_pix2foc, METH_VARARGS|METH_KEYWORDS, doc_pix2foc},
@@ -840,16 +744,12 @@ static PyMethodDef Wcs_methods[] = {
 static PyMethodDef module_methods[] = {
   {"_sanity_check", (PyCFunction)_sanity_check, METH_NOARGS, ""},
   {"find_all_wcs", (PyCFunction)PyWcsprm_find_all_wcs, METH_VARARGS|METH_KEYWORDS, doc_find_all_wcs},
+  {"set_wtbarr_fitsio_callback", (PyCFunction)PyWcsprm_set_wtbarr_fitsio_callback, METH_VARARGS, NULL},
   {NULL}  /* Sentinel */
 };
 
 static PyTypeObject WcsType = {
-  #if PY3K
   PyVarObject_HEAD_INIT(NULL, 0)
-  #else
-  PyObject_HEAD_INIT(NULL)
-  0,                            /*ob_size*/
-  #endif
   "astropy.wcs.WCSBase",                 /*tp_name*/
   sizeof(Wcs),                /*tp_basicsize*/
   0,                            /*tp_itemsize*/
@@ -911,30 +811,20 @@ struct module_state {
 #endif
 };
 
-#if PY3K
-    static struct PyModuleDef moduledef = {
-        PyModuleDef_HEAD_INIT,
-        "_wcs",
-        NULL,
-        sizeof(struct module_state),
-        module_methods,
-        NULL,
-        NULL,
-        NULL,
-        NULL
-    };
+static struct PyModuleDef moduledef = {
+    PyModuleDef_HEAD_INIT,
+    "_wcs",
+    NULL,
+    sizeof(struct module_state),
+    module_methods,
+    NULL,
+    NULL,
+    NULL,
+    NULL
+};
 
-    #define INITERROR return NULL
-
-    PyMODINIT_FUNC
-    PyInit__wcs(void)
-
-#else
-    #define INITERROR return
-
-    PyMODINIT_FUNC
-    init_wcs(void)
-#endif
+PyMODINIT_FUNC
+PyInit__wcs(void)
 
 {
   PyObject* m;
@@ -956,36 +846,37 @@ struct module_state {
   wcs_errexc[12] = &WcsExc_InvalidSubimageSpecification; /* Invalid subimage specification (no spectral axis) */
   wcs_errexc[13] = &WcsExc_NonseparableSubimageCoordinateSystem; /* Non-separable subimage coordinate system */
 
-#if PY3K
   m = PyModule_Create(&moduledef);
-#else
-  m = Py_InitModule3("_wcs", module_methods, NULL);
-#endif
 
   if (m == NULL)
-    INITERROR;
+    return NULL;
 
   import_array();
-#if defined(_MSC_VER)
-  fill_docstrings();
-#endif
 
   if (_setup_api(m)                 ||
       _setup_str_list_proxy_type(m) ||
       _setup_unit_list_proxy_type(m)||
       _setup_wcsprm_type(m)         ||
+      _setup_auxprm_type(m)         ||
       _setup_tabprm_type(m)         ||
-      _setup_units_type(m)          ||
-      /* _setup_wtbarr_type(m)         || */
+      _setup_wtbarr_type(m)         ||
       _setup_distortion_type(m)     ||
       _setup_sip_type(m)            ||
       _setup_wcs_type(m)          ||
       _define_exceptions(m)) {
     Py_DECREF(m);
-    INITERROR;
+    return NULL;
   }
 
-#if PY3K
-  return m;
+#ifdef HAVE_WCSLIB_VERSION
+  if (PyModule_AddStringConstant(m, "__version__", wcslib_version(NULL))) {
+    return NULL;
+  }
+#else
+  if (PyModule_AddStringConstant(m, "__version__", "4.x")) {
+    return NULL;
+  }
 #endif
+
+  return m;
 }

@@ -6,31 +6,64 @@ Python. It also provides an index for other astronomy packages and tools for
 managing them.
 """
 
-# this indicates whether or not we are in astropy's setup.py
-try:
-    _ASTROPY_SETUP_
-except NameError:
-    from sys import version_info
-    if version_info[0] >= 3:
-        import builtins
-    else:
-        import __builtin__ as builtins
-    builtins._ASTROPY_SETUP_ = False
-    del version_info
+import sys
+import os
+from warnings import warn
 
-try:
-    from .version import version as __version__
-except ImportError:
-    # TODO: Issue a warning using the logging framework
-    __version__ = ''
-try:
-    from .version import githash as __githash__
-except ImportError:
-    # TODO: Issue a warning using the logging framework
-    __githash__ = ''
+from .version import version as __version__
+
+__minimum_python_version__ = '3.6'
+__minimum_numpy_version__ = '1.16.0'
+__minimum_erfa_version__ = '1.7'
+__minimum_scipy_version__ = '0.18'
+# ASDF is an optional dependency, but this is the minimum version that is
+# compatible with Astropy when it is installed.
+__minimum_asdf_version__ = '2.6.0'
+# PyYAML is an optional dependency, but this is the minimum version that is
+# advertised to be supported.
+__minimum_yaml_version__ = '3.12'
 
 
-import logging
+class UnsupportedPythonError(Exception):
+    pass
+
+
+# This is the same check as the one at the top of setup.py
+if sys.version_info < tuple(int(val) for val in __minimum_python_version__.split('.')):
+    raise UnsupportedPythonError(f"Astropy does not support Python < {__minimum_python_version__}")
+
+
+def _is_astropy_source(path=None):
+    """
+    Returns whether the source for this module is directly in an astropy
+    source distribution or checkout.
+    """
+
+    # If this __init__.py file is in ./astropy/ then import is within a source
+    # dir .astropy-root is a file distributed with the source, but that should
+    # not installed
+    if path is None:
+        path = os.path.join(os.path.dirname(__file__), os.pardir)
+    elif os.path.isfile(path):
+        path = os.path.dirname(path)
+
+    source_dir = os.path.abspath(path)
+    return os.path.exists(os.path.join(source_dir, '.astropy-root'))
+
+
+def _is_astropy_setup():
+    """
+    Returns whether we are currently being imported in the context of running
+    Astropy's setup.py.
+    """
+
+    main_mod = sys.modules.get('__main__')
+    if not main_mod:
+        return False
+
+    return (getattr(main_mod, '__file__', False) and
+            os.path.basename(main_mod.__file__).rstrip('co') == 'setup.py' and
+            _is_astropy_source(main_mod.__file__))
 
 
 # The location of the online documentation for astropy
@@ -38,115 +71,204 @@ import logging
 if 'dev' in __version__:
     online_docs_root = 'http://docs.astropy.org/en/latest/'
 else:
-    online_docs_root = 'http://docs.astropy.org/en/{0}/'.format(__version__)
+    online_docs_root = f'http://docs.astropy.org/en/{__version__}/'
 
 
-# set up the test command
-def _get_test_runner():
-    from .tests.helper import TestRunner
-    return TestRunner(__path__[0])
-
-
-def test(package=None, test_path=None, args=None, plugins=None,
-         verbose=False, pastebin=None, remote_data=False, pep8=False,
-         pdb=False, coverage=False, open_files=False):
+def _check_requirement(name, minimum_version):
     """
-    Run Astropy tests using py.test. A proper set of arguments is
-    constructed and passed to `pytest.main`.
-
-    Parameters
-    ----------
-    package : str, optional
-        The name of a specific package to test, e.g. 'io.fits' or 'utils'.
-        If nothing is specified all default Astropy tests are run.
-
-    test_path : str, optional
-        Specify location to test by path. May be a single file or
-        directory. Must be specified absolutely or relative to the
-        calling directory.
-
-    args : str, optional
-        Additional arguments to be passed to `pytest.main` in the `args`
-        keyword argument.
-
-    plugins : list, optional
-        Plugins to be passed to `pytest.main` in the `plugins` keyword
-        argument.
-
-    verbose : bool, optional
-        Convenience option to turn on verbose output from py.test. Passing
-        True is the same as specifying `-v` in `args`.
-
-    pastebin : {'failed','all',None}, optional
-        Convenience option for turning on py.test pastebin output. Set to
-        'failed' to upload info for failed tests, or 'all' to upload info
-        for all tests.
-
-    remote_data : bool, optional
-        Controls whether to run tests marked with @remote_data. These
-        tests use online data and are not run by default. Set to True to
-        run these tests.
-
-    pep8 : bool, optional
-        Turn on PEP8 checking via the pytest-pep8 plugin and disable normal
-        tests. Same as specifying `--pep8 -k pep8` in `args`.
-
-    pdb : bool, optional
-        Turn on PDB post-mortem analysis for failing tests. Same as
-        specifying `--pdb` in `args`.
-
-    coverage : bool, optional
-        Generate a test coverage report.  The result will be placed in
-        the directory htmlcov.
-
-    open_files : bool, optional
-        Fail when any tests leave files open.  Off by default, because
-        this adds extra run time to the test suite.  Works only on
-        platforms with a working `lsof` command.
-
-    See Also
-    --------
-    pytest.main : py.test function wrapped by `run_tests`.
-
+    Check that ``name`` is installed and it is of the ``minimum_version`` we
+    require.
     """
-    test_runner = _get_test_runner()
-    return test_runner.run_tests(
-        package=package, test_path=test_path, args=args,
-        plugins=plugins, verbose=verbose, pastebin=pastebin,
-        remote_data=remote_data, pep8=pep8, pdb=pdb,
-        coverage=coverage, open_files=open_files)
+    # Note: We could have used distutils.version for this comparison,
+    # but it seems like overkill to import distutils at runtime, and
+    # our own utils.introspection.minversion indirectly needs requirements.
+    requirement_met = False
+    import_fail = ''
+    try:
+        module = __import__(name)
+    except ImportError:
+        import_fail = f'{name} is not installed.'
+    else:
+        version = getattr(module, '__version__')
+        requirement_met = version.split('.') >= minimum_version.split('.')
+
+    if not requirement_met:
+        msg = (f"{name} version {minimum_version} or later must "
+               f"be installed to use Astropy. {import_fail}")
+        raise ImportError(msg)
+
+    return module
 
 
-# Use the root logger as a dummy log before initilizing Astropy's logger
-log = logging.getLogger()
+_check_requirement('numpy', __minimum_numpy_version__)
+_check_requirement('erfa', __minimum_erfa_version__)
+
+
+from . import config as _config
+
+
+class Conf(_config.ConfigNamespace):
+    """
+    Configuration parameters for `astropy`.
+    """
+
+    unicode_output = _config.ConfigItem(
+        False,
+        'When True, use Unicode characters when outputting values, and '
+        'displaying widgets at the console.')
+    use_color = _config.ConfigItem(
+        sys.platform != 'win32',
+        'When True, use ANSI color escape sequences when writing to the console.',
+        aliases=['astropy.utils.console.USE_COLOR', 'astropy.logger.USE_COLOR'])
+    max_lines = _config.ConfigItem(
+        None,
+        description='Maximum number of lines in the display of pretty-printed '
+        'objects. If not provided, try to determine automatically from the '
+        'terminal size.  Negative numbers mean no limit.',
+        cfgtype='integer(default=None)',
+        aliases=['astropy.table.pprint.max_lines'])
+    max_width = _config.ConfigItem(
+        None,
+        description='Maximum number of characters per line in the display of '
+        'pretty-printed objects.  If not provided, try to determine '
+        'automatically from the terminal size. Negative numbers mean no '
+        'limit.',
+        cfgtype='integer(default=None)',
+        aliases=['astropy.table.pprint.max_width'])
+
+
+conf = Conf()
+
+
+# Define a base ScienceState for configuring constants and units
+from .utils.state import ScienceState
+
+
+class base_constants_version(ScienceState):
+    """
+    Base class for the real version-setters below
+    """
+    _value = 'test'
+
+    _versions = dict(test='test')
+
+    @classmethod
+    def validate(cls, value):
+        if value not in cls._versions:
+            raise ValueError('Must be one of {}'
+                             .format(list(cls._versions.keys())))
+        return cls._versions[value]
+
+    @classmethod
+    def set(cls, value):
+        """
+        Set the current constants value.
+        """
+        import sys
+        if 'astropy.units' in sys.modules:
+            raise RuntimeError('astropy.units is already imported')
+        if 'astropy.constants' in sys.modules:
+            raise RuntimeError('astropy.constants is already imported')
+
+        class _Context:
+            def __init__(self, parent, value):
+                self._value = value
+                self._parent = parent
+
+            def __enter__(self):
+                pass
+
+            def __exit__(self, type, value, tb):
+                self._parent._value = self._value
+
+            def __repr__(self):
+                return ('<ScienceState {}: {!r}>'
+                        .format(self._parent.__name__, self._parent._value))
+
+        ctx = _Context(cls, cls._value)
+        value = cls.validate(value)
+        cls._value = value
+        return ctx
+
+
+class physical_constants(base_constants_version):
+    """
+    The version of physical constants to use
+    """
+    # Maintainers: update when new constants are added
+    _value = 'codata2018'
+
+    _versions = dict(codata2018='codata2018', codata2014='codata2014',
+                     codata2010='codata2010', astropyconst40='codata2018',
+                     astropyconst20='codata2014', astropyconst13='codata2010')
+
+
+class astronomical_constants(base_constants_version):
+    """
+    The version of astronomical constants to use
+    """
+    # Maintainers: update when new constants are added
+    _value = 'iau2015'
+
+    _versions = dict(iau2015='iau2015', iau2012='iau2012',
+                     astropyconst40='iau2015', astropyconst20='iau2015',
+                     astropyconst13='iau2012')
+
+
+# Create the test() function
+from .tests.runner import TestRunner
+test = TestRunner.make_test_runner_in(__path__[0])
+
 
 # if we are *not* in setup mode, import the logger and possibly populate the
 # configuration file with the defaults
-if not _ASTROPY_SETUP_:
-    from .logger import _init_log
+def _initialize_astropy():
     from . import config
 
-    import os
-    import sys
-    from warnings import warn
+    def _rollback_import(message):
+        log.error(message)
+        # Now disable exception logging to avoid an annoying error in the
+        # exception logger before we raise the import error:
+        _teardown_log()
 
-    log = _init_log()
+        # Roll back any astropy sub-modules that have been imported thus
+        # far
+
+        for key in list(sys.modules):
+            if key.startswith('astropy.'):
+                del sys.modules[key]
+        raise ImportError('astropy')
 
     try:
         from .utils import _compiler
     except ImportError:
-        if os.path.exists('setup.py'):
-            log.error('You appear to be trying to import astropy from within '
-                      'a source checkout; please run `./setup.py develop` or '
-                      '`./setup.py build_ext --inplace` first so that '
-                      'extension modules can be compiled and made importable.')
-            sys.exit(1)
+        if _is_astropy_source():
+            log.warning('You appear to be trying to import astropy from '
+                        'within a source checkout without building the '
+                        'extension modules first.  Attempting to (re)build '
+                        'extension modules:')
+
+            try:
+                _rebuild_extensions()
+            except BaseException as exc:
+                _rollback_import(
+                    'An error occurred while attempting to rebuild the '
+                    'extension modules.  Please try manually running '
+                    '`./setup.py develop` or `./setup.py build_ext '
+                    '--inplace` to see what the issue was.  Extension '
+                    'modules must be successfully compiled and importable '
+                    'in order to import astropy.')
+                # Reraise the Exception only in case it wasn't an Exception,
+                # for example if a "SystemExit" or "KeyboardInterrupt" was
+                # invoked.
+                if not isinstance(exc, Exception):
+                    raise
+
         else:
             # Outright broken installation; don't be nice.
             raise
 
     # add these here so we only need to cleanup the namespace at the end
-    config_dir = None
     config_dir = os.path.dirname(__file__)
 
     try:
@@ -155,6 +277,124 @@ if not _ASTROPY_SETUP_:
         wmsg = (e.args[0] + " Cannot install default profile. If you are "
                 "importing from source, this is expected.")
         warn(config.configuration.ConfigurationDefaultMissingWarning(wmsg))
-        del e
 
-    del _init_log, os, warn, config_dir  # clean up namespace
+
+def _rebuild_extensions():
+    global __version__
+    global __githash__
+
+    import subprocess
+    import time
+
+    from .utils.console import Spinner
+
+    devnull = open(os.devnull, 'w')
+    old_cwd = os.getcwd()
+    os.chdir(os.path.join(os.path.dirname(__file__), os.pardir))
+    try:
+        sp = subprocess.Popen([sys.executable, 'setup.py', 'build_ext',
+                               '--inplace'], stdout=devnull,
+                               stderr=devnull)
+        with Spinner('Rebuilding extension modules') as spinner:
+            while sp.poll() is None:
+                next(spinner)
+                time.sleep(0.05)
+    finally:
+        os.chdir(old_cwd)
+        devnull.close()
+
+    if sp.returncode != 0:
+        raise OSError('Running setup.py build_ext --inplace failed '
+                      'with error code {}: try rerunning this command '
+                      'manually to check what the error was.'.format(
+                          sp.returncode))
+
+    # Try re-loading module-level globals from the astropy.version module,
+    # which may not have existed before this function ran
+    try:
+        from .version import version as __version__
+    except ImportError:
+        pass
+
+    try:
+        from .version import githash as __githash__
+    except ImportError:
+        pass
+
+
+# Set the bibtex entry to the article referenced in CITATION.
+def _get_bibtex():
+    citation_file = os.path.join(os.path.dirname(__file__), 'CITATION')
+
+    with open(citation_file, 'r') as citation:
+        refs = citation.read().split('@ARTICLE')[1:]
+        if len(refs) == 0: return ''
+        bibtexreference = f'@ARTICLE{refs[0]}'
+    return bibtexreference
+
+
+__citation__ = __bibtex__ = _get_bibtex()
+
+import logging
+
+# Use the root logger as a dummy log before initilizing Astropy's logger
+log = logging.getLogger()
+
+
+from .logger import _init_log, _teardown_log
+
+log = _init_log()
+
+_initialize_astropy()
+
+from .utils.misc import find_api_page
+
+
+def online_help(query):
+    """
+    Search the online Astropy documentation for the given query.
+    Opens the results in the default web browser.  Requires an active
+    Internet connection.
+
+    Parameters
+    ----------
+    query : str
+        The search query.
+    """
+    from urllib.parse import urlencode
+    import webbrowser
+
+    version = __version__
+    if 'dev' in version:
+        version = 'latest'
+    else:
+        version = 'v' + version
+
+    url = f"http://docs.astropy.org/en/{version}/search.html?{urlencode({'q': query})}"
+    webbrowser.open(url)
+
+
+__dir_inc__ = ['__version__', '__githash__', '__minimum_numpy_version__',
+               '__bibtex__', 'test', 'log', 'find_api_page', 'online_help',
+               'online_docs_root', 'conf', 'physical_constants',
+               'astronomical_constants']
+
+
+from types import ModuleType as __module_type__
+# Clean up top-level namespace--delete everything that isn't in __dir_inc__
+# or is a magic attribute, and that isn't a submodule of this package
+for varname in dir():
+    if not ((varname.startswith('__') and varname.endswith('__')) or
+            varname in __dir_inc__ or
+            (varname[0] != '_' and
+                isinstance(locals()[varname], __module_type__) and
+                locals()[varname].__name__.startswith(__name__ + '.'))):
+        # The last clause in the the above disjunction deserves explanation:
+        # When using relative imports like ``from .. import config``, the
+        # ``config`` variable is automatically created in the namespace of
+        # whatever module ``..`` resolves to (in this case astropy).  This
+        # happens a few times just in the module setup above.  This allows
+        # the cleanup to keep any public submodules of the astropy package
+        del locals()[varname]
+
+del varname, __module_type__

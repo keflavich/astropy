@@ -1,8 +1,10 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-from ....tests.helper import raises
+
+
+from astropy.tests.helper import raises
 
 # LOCAL
-from .. import ucd
+from astropy.io.votable import ucd
 
 
 def test_none():
@@ -35,7 +37,7 @@ examples = {
 
 
 def test_check():
-    for s, p in examples.iteritems():
+    for s, p in examples.items():
         assert ucd.parse_ucd(s, True, True) == p
         assert ucd.check_ucd(s, True, True)
 
@@ -53,5 +55,3 @@ def test_invalid_namespace():
 @raises(ValueError)
 def test_invalid_word():
     ucd.parse_ucd("-pho")
-
-

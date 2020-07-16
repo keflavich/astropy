@@ -1,8 +1,11 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
+
+
+from collections import OrderedDict
+
 import numpy as np
 
-from ..utils.compat.odict import OrderedDict
-from ..utils.misc import isiterable
+from astropy.utils.misc import isiterable
 
 __all__ = ['FlagCollection']
 
@@ -15,9 +18,9 @@ class FlagCollection(OrderedDict):
     data, so the `FlagCollection` class adds shape checking to an
     ordered dictionary class.
 
-    The `FlagCollection` should be initialized like an `OrderedDict`,
-    but with the addition of a ``shape=`` keyword argument used to
-    pass the NDData shape.
+    The `FlagCollection` should be initialized like an
+    `~collections.OrderedDict`, but with the addition of a ``shape=``
+    keyword argument used to pass the NDData shape.
     """
 
     def __init__(self, *args, **kwargs):
@@ -25,9 +28,11 @@ class FlagCollection(OrderedDict):
         if 'shape' in kwargs:
             self.shape = kwargs.pop('shape')
             if not isiterable(self.shape):
-                raise ValueError("FlagCollection shape should be an iterable object")
+                raise ValueError("FlagCollection shape should be "
+                                 "an iterable object")
         else:
-            raise Exception("FlagCollection should be initialized with the shape of the data")
+            raise Exception("FlagCollection should be initialized with "
+                            "the shape of the data")
 
         OrderedDict.__init__(self, *args, **kwargs)
 
@@ -37,6 +42,7 @@ class FlagCollection(OrderedDict):
             if value.shape == self.shape:
                 OrderedDict.__setitem__(self, item, value, **kwargs)
             else:
-                raise ValueError("flags array shape {0:s} does not match data shape {1:s}".format(value.shape, self.shape))
+                raise ValueError("flags array shape {} does not match data "
+                                 "shape {}".format(value.shape, self.shape))
         else:
             raise TypeError("flags should be given as a Numpy array")

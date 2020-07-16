@@ -4,28 +4,28 @@ Contains a class to handle a validation result for a single VOTable
 file.
 """
 
-from __future__ import absolute_import
 
 # STDLIB
+from xml.parsers.expat import ExpatError
 import hashlib
-import httplib
 import os
-import cPickle as pickle
 import shutil
 import socket
 import subprocess
-import urllib2
 import warnings
+import pickle
+import urllib.request
+import urllib.error
+import http.client
 
 # VO
-from .. import table
-from .. import exceptions
-from .. import xmlutil
-from ..util import IS_PY3K
+from astropy.io.votable import table
+from astropy.io.votable import exceptions
+from astropy.io.votable import xmlutil
 
 
 class Result:
-    def __init__(self, url, root='results'):
+    def __init__(self, url, root='results', timeout=10):
         self.url = url
         m = hashlib.md5()
         m.update(url)
@@ -35,6 +35,7 @@ class Result:
             self._hash[0:2], self._hash[2:4], self._hash[4:])
         if not os.path.exists(self.get_dirpath()):
             os.makedirs(self.get_dirpath())
+        self.timeout = timeout
         self.load_attributes()
 
     def __enter__(self):
@@ -63,7 +64,7 @@ class Result:
             try:
                 with open(path, 'rb') as fd:
                     self._attributes = pickle.load(fd)
-            except:
+            except Exception:
                 shutil.rmtree(self.get_dirpath())
                 os.makedirs(self.get_dirpath())
                 self._attributes = {}
@@ -98,26 +99,24 @@ class Result:
         def fail(reason):
             reason = str(reason)
             with open(path, 'wb') as fd:
-                fd.write("FAILED: %s\n" % reason)
+                fd.write(f'FAILED: {reason}\n'.encode('utf-8'))
             self['network_error'] = reason
 
         r = None
         try:
-            if IS_PY3K:
-                r = urllib2.urlopen(self.url.decode('ascii'))
-            else:
-                r = urllib2.urlopen(self.url, timeout=10)
-        except urllib2.URLError as e:
+            r = urllib.request.urlopen(
+                self.url.decode('ascii'), timeout=self.timeout)
+        except urllib.error.URLError as e:
             if hasattr(e, 'reason'):
                 reason = e.reason
             else:
                 reason = e.code
             fail(reason)
             return
-        except httplib.HTTPException as e:
-            fail("HTTPException: %s" % str(e))
+        except http.client.HTTPException as e:
+            fail("HTTPException: {}".format(str(e)))
             return
-        except socket.timeout as e:
+        except (socket.timeout, socket.error) as e:
             fail("Timeout")
             return
 
@@ -149,7 +148,7 @@ class Result:
         if not os.path.exists(path):
             self.download_xml_content()
         self['version'] = ''
-        if self['network_error'] is not None:
+        if 'network_error' in self and self['network_error'] is not None:
             self['nwarnings'] = 0
             self['nexceptions'] = 0
             self['warnings'] = []
@@ -164,8 +163,8 @@ class Result:
         with open(path, 'rb') as input:
             with warnings.catch_warnings(record=True) as warning_lines:
                 try:
-                    t = table.parse(input, pedantic=False, filename=path)
-                except ValueError as e:
+                    t = table.parse(input, verify='warn', filename=path)
+                except (ValueError, TypeError, ExpatError) as e:
                     lines.append(str(e))
                     nexceptions += 1
         lines = [str(x.message) for x in warning_lines] + lines
@@ -178,9 +177,16 @@ class Result:
         if 'xmllint' not in self:
             # Now check the VO schema based on the version in
             # the file.
-            success, stdout, stderr = xmlutil.validate_schema(path, version)
-            self['xmllint'] = (success == 0)
-            self['xmllint_content'] = stderr
+            try:
+                success, stdout, stderr = xmlutil.validate_schema(path, version)
+            # OSError is raised when XML file eats all memory and
+            # system sends kill signal.
+            except OSError as e:
+                self['xmllint'] = None
+                self['xmllint_content'] = str(e)
+            else:
+                self['xmllint'] = (success == 0)
+                self['xmllint_content'] = stderr
 
         warning_types = set()
         for line in lines:
@@ -200,6 +206,9 @@ class Result:
         return warning_code in self['warning_types']
 
     def match_expectations(self):
+        if 'network_error' not in self:
+            self['network_error'] = None
+
         if self['expected'] == 'good':
             return (not self['network_error'] and
                     self['nwarnings'] == 0 and
@@ -214,8 +223,8 @@ class Result:
     def validate_with_votlint(self, path_to_stilts_jar):
         filename = self.get_vo_xml_path()
         p = subprocess.Popen(
-            "java -jar %s votlint validate=false %s" %
-            (path_to_stilts_jar, filename),
+            "java -jar {} votlint validate=false {}".format(
+                path_to_stilts_jar, filename),
             shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = p.communicate()
         if len(stdout) or p.returncode:
@@ -226,48 +235,54 @@ class Result:
 
 
 def get_result_subsets(results, root, s=None):
-    all_results      = []
-    correct          = []
-    not_expected     = []
-    fail_schema      = []
-    schema_mismatch  = []
-    fail_votlint     = []
+    all_results = []
+    correct = []
+    not_expected = []
+    fail_schema = []
+    schema_mismatch = []
+    fail_votlint = []
     votlint_mismatch = []
     network_failures = []
-    version_10       = []
-    version_11       = []
-    version_12       = []
-    version_unknown  = []
-    has_warnings     = []
-    warning_set      = {}
-    has_exceptions   = []
-    exception_set    = {}
+    version_10 = []
+    version_11 = []
+    version_12 = []
+    version_unknown = []
+    has_warnings = []
+    warning_set = {}
+    has_exceptions = []
+    exception_set = {}
 
     for url in results:
         if s:
-            s.next()
+            next(s)
 
-        x = Result(url, root=root)
+        if isinstance(url, Result):
+            x = url
+        else:
+            x = Result(url, root=root)
+
         all_results.append(x)
         if (x['nwarnings'] == 0 and
-            x['nexceptions'] == 0 and
-            x['xmllint'] is True):
+                x['nexceptions'] == 0 and
+                x['xmllint'] is True):
             correct.append(x)
         if not x.match_expectations():
             not_expected.append(x)
         if x['xmllint'] is False:
             fail_schema.append(x)
         if (x['xmllint'] is False and
-            x['nwarnings'] == 0 and
-            x['nexceptions'] == 0):
+                x['nwarnings'] == 0 and
+                x['nexceptions'] == 0):
             schema_mismatch.append(x)
         if 'votlint' in x and x['votlint'] is False:
             fail_votlint.append(x)
+            if 'network_error' not in x:
+                x['network_error'] = None
             if (x['nwarnings'] == 0 and
-                x['nexceptions'] == 0 and
-                x['network_error'] is None):
+                    x['nexceptions'] == 0 and
+                    x['network_error'] is None):
                 votlint_mismatch.append(x)
-        if x['network_error'] is not None:
+        if 'network_error' in x and x['network_error'] is not None:
             network_failures.append(x)
         version = x['version']
         if version == '1.0':
@@ -282,8 +297,8 @@ def get_result_subsets(results, root, s=None):
             has_warnings.append(x)
             for warning in x['warning_types']:
                 if (warning is not None and
-                    len(warning) == 3 and
-                    warning.startswith('W')):
+                        len(warning) == 3 and
+                        warning.startswith('W')):
                     warning_set.setdefault(warning, [])
                     warning_set[warning].append(x)
         if x['nexceptions'] > 0:
@@ -299,44 +314,44 @@ def get_result_subsets(results, root, s=None):
     exception_set.sort()
 
     tables = [
-        ('all', u'All tests', all_results),
-        ('correct', u'Correct', correct),
-        ('unexpected', u'Unexpected', not_expected),
-        ('schema', u'Invalid against schema', fail_schema),
-        ('schema_mismatch', u'Invalid against schema/Passed vo.table',
+        ('all', 'All tests', all_results),
+        ('correct', 'Correct', correct),
+        ('unexpected', 'Unexpected', not_expected),
+        ('schema', 'Invalid against schema', fail_schema),
+        ('schema_mismatch', 'Invalid against schema/Passed vo.table',
          schema_mismatch, ['ul']),
-        ('fail_votlint', u'Failed votlint', fail_votlint),
-        ('votlint_mismatch', u'Failed votlint/Passed vo.table',
+        ('fail_votlint', 'Failed votlint', fail_votlint),
+        ('votlint_mismatch', 'Failed votlint/Passed vo.table',
          votlint_mismatch, ['ul']),
-        ('network_failures', u'Network failures', network_failures),
+        ('network_failures', 'Network failures', network_failures),
         ('version1.0', 'Version 1.0', version_10),
         ('version1.1', 'Version 1.1', version_11),
         ('version1.2', 'Version 1.2', version_12),
         ('version_unknown', 'Version unknown', version_unknown),
         ('warnings', 'Warnings', has_warnings)]
-    for warning_code, warnings in warning_set:
+    for warning_code, warning in warning_set:
         if s:
-            s.next()
+            next(s)
 
         warning_class = getattr(exceptions, warning_code, None)
         if warning_class:
             warning_descr = warning_class.get_short_name()
             tables.append(
                 (warning_code,
-                 '%s: %s' % (warning_code, warning_descr),
-                 warnings, ['ul', 'li']))
+                 f'{warning_code}: {warning_descr}',
+                 warning, ['ul', 'li']))
     tables.append(
         ('exceptions', 'Exceptions', has_exceptions))
     for exception_code, exc in exception_set:
         if s:
-            s.next()
+            next(s)
 
         exception_class = getattr(exceptions, exception_code, None)
         if exception_class:
             exception_descr = exception_class.get_short_name()
             tables.append(
                 (exception_code,
-                 '%s: %s' % (exception_code, exception_descr),
+                 f'{exception_code}: {exception_descr}',
                  exc, ['ul', 'li']))
 
     return tables

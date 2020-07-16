@@ -9,6 +9,7 @@
  *
  ******************************************************************************/
 
+#define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
 /******************************************************************************
@@ -29,25 +30,14 @@ next_power_of_2(Py_ssize_t n)
     n |= n >> 16;
     n++;
 
-    return n;
+    return n == 0 ? 2 : n;
 }
-
-/******************************************************************************
- * Python version compatibility macros
- ******************************************************************************/
-#if PY_MAJOR_VERSION >= 3
-#  define IS_PY3K
-#endif
-
-#ifndef Py_TYPE
-#  define Py_TYPE(o) ((o)->ob_type)
-#endif
 
 /******************************************************************************
  * Write TABLEDATA
  ******************************************************************************/
 
-#define CHAR Py_UNICODE
+#define CHAR char
 
 /*
  * Reallocate the write buffer to the requested size
@@ -71,7 +61,7 @@ _buffer_realloc(
         return -1;
     }
 
-    new_mem = realloc((void *)*buffer, n * sizeof(CHAR));
+    new_mem = PyMem_Realloc((void *)*buffer, n * sizeof(CHAR));
     if (new_mem == NULL) {
         PyErr_SetString(PyExc_MemoryError, "Out of memory for XML text.");
         return -1;
@@ -176,7 +166,7 @@ write_tabledata(PyObject* self, PyObject *args, PyObject *kwds)
     PyObject* array = NULL;
     PyObject* mask = NULL;
     PyObject* converters = NULL;
-    int write_null_values = 0;
+    PyObject* py_supports_empty_values = NULL;
     Py_ssize_t indent = 0;
     Py_ssize_t buf_size = (Py_ssize_t)1 << 8;
 
@@ -201,11 +191,12 @@ write_tabledata(PyObject* self, PyObject *args, PyObject *kwds)
     PyObject* tmp = NULL;
     CHAR* str_tmp = NULL;
     Py_ssize_t str_len = 0;
+    int* supports_empty_values = NULL;
     PyObject* result = 0;
 
-    if (!PyArg_ParseTuple(args, "OOOOinn:write_tabledata",
+    if (!PyArg_ParseTuple(args, "OOOOOnn:write_tabledata",
                           &write_method, &array, &mask, &converters,
-                          &write_null_values, &indent, &buf_size)) {
+                          &py_supports_empty_values, &indent, &buf_size)) {
         goto exit;
     }
 
@@ -213,6 +204,7 @@ write_tabledata(PyObject* self, PyObject *args, PyObject *kwds)
     if (!PySequence_Check(array)) goto exit;
     if (!PySequence_Check(mask)) goto exit;
     if (!PyList_Check(converters)) goto exit;
+    if (!PyList_Check(py_supports_empty_values)) goto exit;
     indent = CLAMP(indent, (Py_ssize_t)0, (Py_ssize_t)80);
     buf_size = CLAMP(buf_size, (Py_ssize_t)1 << 8, (Py_ssize_t)1 << 24);
 
@@ -222,8 +214,16 @@ write_tabledata(PyObject* self, PyObject *args, PyObject *kwds)
 
     if ((nrows = PySequence_Size(array)) == -1) goto exit;
     if ((ncols = PyList_Size(converters)) == -1) goto exit;
+    if (PyList_Size(py_supports_empty_values) != ncols) goto exit;
 
-    if ((buf = malloc((size_t)buf_size * sizeof(CHAR))) == NULL) goto exit;
+    supports_empty_values = PyMem_Malloc(sizeof(int) * ncols);
+    if (!supports_empty_values) goto exit;
+    for (i = 0; i < ncols; ++i) {
+        supports_empty_values[i] = PyObject_IsTrue(
+                PyList_GET_ITEM(py_supports_empty_values, i));
+    }
+
+    if ((buf = PyMem_Malloc((size_t)buf_size * sizeof(CHAR))) == NULL) goto exit;
 
     for (i = 0; i < nrows; ++i) {
         if ((array_row = PySequence_GetItem(array, i)) == NULL) goto exit;
@@ -238,25 +238,22 @@ write_tabledata(PyObject* self, PyObject *args, PyObject *kwds)
             if ((array_val = PySequence_GetItem(array_row, j)) == NULL) goto exit;
             if ((mask_val = PySequence_GetItem(mask_row, j)) == NULL) goto exit;
 
-            if (write_null_values) {
-                write_full = 1;
-            } else {
-                if (mask_val == Py_False) {
-                    write_full = 1;
-                } else if (mask_val == Py_True) {
-                    write_full = 0;
-                } else {
-                    if ((all_masked_obj =
-                         PyObject_CallFunctionObjArgs(numpy_all_method, mask_val, NULL))
-                        == NULL) goto exit;
-                    if ((all = PyObject_IsTrue(all_masked_obj)) == -1) {
-                        Py_DECREF(all_masked_obj);
-                        goto exit;
-                    }
+            write_full = 1;
+            if (mask_val == Py_True) {
+                write_full = 0;
+            } else if (mask_val == Py_False) {
+                // pass
+            } else if (supports_empty_values[j]) {
+                if ((all_masked_obj =
+                     PyObject_CallFunctionObjArgs(numpy_all_method, mask_val, NULL))
+                    == NULL) goto exit;
+                if ((all = PyObject_IsTrue(all_masked_obj)) == -1) {
                     Py_DECREF(all_masked_obj);
-
-                    write_full = !all;
+                    goto exit;
                 }
+                Py_DECREF(all_masked_obj);
+
+                write_full = !all;
             }
 
             if (write_full) {
@@ -265,12 +262,16 @@ write_tabledata(PyObject* self, PyObject *args, PyObject *kwds)
                 if ((str_val =
                      PyObject_CallFunctionObjArgs(converter, array_val, mask_val, NULL))
                     == NULL) goto exit;
-                if ((str_tmp = PyUnicode_AsUnicode(str_val)) == NULL) {
+                if (PyBytes_Check(str_val)) {
+                    tmp = PyUnicode_FromEncodedObject(str_val, "utf-8", "ignore");
+                    Py_DECREF(str_val);
+                    str_val = tmp;
+                }
+                if ((str_tmp = PyUnicode_AsUTF8AndSize(str_val, &str_len)) == NULL) {
                     Py_DECREF(str_val);
                     goto exit;
                 }
 
-                str_len = PyUnicode_GetSize(str_val);
                 if (str_len) {
                     if (_write_cstring(&buf, &buf_size, &x, "  <TD>", 6) ||
                         _write_string(&buf, &buf_size, &x, str_tmp, str_len) ||
@@ -303,8 +304,8 @@ write_tabledata(PyObject* self, PyObject *args, PyObject *kwds)
 
         /* NULL-terminate the string */
         *x = (CHAR)0;
-        if ((tmp = PyObject_CallFunction(write_method, "u#", buf, x - buf))
-            == NULL) goto exit;
+        if ((tmp = PyObject_CallFunction(write_method, "s#",
+                buf, (Py_ssize_t)(x - buf))) == NULL) goto exit;
         Py_DECREF(tmp);
     }
 
@@ -320,7 +321,8 @@ write_tabledata(PyObject* self, PyObject *args, PyObject *kwds)
     Py_XDECREF(array_val);
     Py_XDECREF(mask_val);
 
-    free(buf);
+    PyMem_Free(buf);
+    PyMem_Free(supports_empty_values);
 
     return result;
 }
@@ -340,7 +342,6 @@ struct module_state {
     void* none;
 };
 
-#ifdef IS_PY3K
 static int module_traverse(PyObject* m, visitproc visit, void* arg)
 {
     return 0;
@@ -363,34 +364,8 @@ static struct PyModuleDef moduledef = {
     NULL
 };
 
-#  define INITERROR return NULL
-
 PyMODINIT_FUNC
 PyInit_tablewriter(void)
-#else /* Not PY3K */
-#  define INITERROR return
-
-#  ifndef PyMODINIT_FUNC  /* declarations for DLL import/export */
-#    define PyMODINIT_FUNC void
-#  endif
-
-PyMODINIT_FUNC
-inittablewriter(void)
-#endif
 {
-    PyObject* m;
-
-#ifdef IS_PY3K
-    m = PyModule_Create(&moduledef);
-#else
-    m = Py_InitModule3("tablewriter", module_methods,
-                       "Fast way to write VOTABLE TABLEDATA");
-#endif
-
-    if (m == NULL)
-        INITERROR;
-
-#ifdef IS_PY3K
-    return m;
-#endif
+    return PyModule_Create(&moduledef);
 }

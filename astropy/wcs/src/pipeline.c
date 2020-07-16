@@ -3,8 +3,9 @@
          mdroe@stsci.edu
 */
 
-#include "pipeline.h"
-#include "util.h"
+#include "astropy_wcs/pipeline.h"
+#include "astropy_wcs/util.h"
+#include "wcserr.h"
 #include <assert.h>
 #include <stdlib.h>
 #include <string.h>
@@ -98,6 +99,13 @@ pipeline_all_pixel2world(
   }
 
   if (has_wcs) {
+    if (ncoord < 1) {
+      status = wcserr_set(
+        PIP_ERRMSG(WCSERR_BAD_PIX),
+        "The number of coordinates must be > 0");
+      goto exit;
+    }
+
     buffer = mem = malloc(
         ncoord * nelem * sizeof(double) + /* imgcrd */
         ncoord * sizeof(double) +         /* phi */
@@ -142,6 +150,9 @@ pipeline_all_pixel2world(
 
     if ((status = wcsp2s(pipeline->wcs, (int)ncoord, (int)nelem, wcs_input, imgcrd,
                          phi, theta, wcs_output, stat))) {
+      if (pipeline->err == NULL) {
+        pipeline->err = calloc(1, sizeof(struct wcserr));
+      }
       wcserr_copy(pipeline->wcs->err, pipeline->err);
     }
 
@@ -186,6 +197,13 @@ int pipeline_pix2foc(
 
   err = &(pipeline->err);
 
+  if (ncoord < 1) {
+      status = wcserr_set(
+        PIP_ERRMSG(WCSERR_BAD_PIX),
+        "The number of coordinates must be > 0");
+      goto exit;
+    }
+
   has_det2im = pipeline->det2im[0] != NULL || pipeline->det2im[1] != NULL;
   has_sip    = pipeline->sip != NULL;
   has_p4     = pipeline->cpdis[0] != NULL || pipeline->cpdis[1] != NULL;
@@ -228,6 +246,9 @@ int pipeline_pix2foc(
   if (has_sip) {
     status = sip_pix2deltas(pipeline->sip, 2, ncoord, input, foc);
     if (status) {
+      if (pipeline->err == NULL) {
+        pipeline->err = calloc(1, sizeof(struct wcserr));
+      }
       wcserr_copy(pipeline->sip->err, pipeline->err);
       goto exit;
     }
@@ -248,4 +269,3 @@ int pipeline_pix2foc(
 
   return status;
 }
-

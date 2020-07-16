@@ -5,7 +5,7 @@
 
 #define NO_IMPORT_ARRAY
 
-#include "pyutil.h"
+#include "astropy_wcs/pyutil.h"
 
 /***************************************************************************
  * List-of-strings proxy object
@@ -25,6 +25,7 @@ static void
 PyStrListProxy_dealloc(
     PyStrListProxy* self) {
 
+  PyObject_GC_UnTrack(self);
   Py_XDECREF(self->pyobject);
   Py_TYPE(self)->tp_free((PyObject*)self);
 }
@@ -50,15 +51,7 @@ PyStrListProxy_traverse(
     visitproc visit,
     void *arg) {
 
-  int vret;
-
-  if (self->pyobject) {
-    vret = visit(self->pyobject, arg);
-    if (vret != 0) {
-      return vret;
-    }
-  }
-
+  Py_VISIT(self->pyobject);
   return 0;
 }
 
@@ -66,11 +59,7 @@ static int
 PyStrListProxy_clear(
     PyStrListProxy *self) {
 
-  PyObject *tmp;
-
-  tmp = self->pyobject;
-  self->pyobject = NULL;
-  Py_XDECREF(tmp);
+  Py_CLEAR(self->pyobject);
 
   return 0;
 }
@@ -113,7 +102,7 @@ PyStrListProxy_getitem(
     PyStrListProxy* self,
     Py_ssize_t index) {
 
-  if (index >= self->size) {
+  if (index >= self->size || index < 0) {
     PyErr_SetString(PyExc_IndexError, "index out of range");
     return NULL;
   }
@@ -127,10 +116,7 @@ PyStrListProxy_setitem(
     Py_ssize_t index,
     PyObject* arg) {
 
-  char* value;
-  Py_ssize_t value_length;
-
-  if (index > self->size) {
+  if (index >= self->size || index < 0) {
     PyErr_SetString(PyExc_IndexError, "index out of range");
     return -1;
   }
@@ -199,11 +185,7 @@ str_list_proxy_repr(
   *wp++ = ']';
   *wp++ = '\0';
 
-  #if PY3K
   result = PyUnicode_FromString(buffer);
-  #else
-  result = PyString_FromString(buffer);
-  #endif
   free(buffer);
   return result;
 }
@@ -229,12 +211,7 @@ static PySequenceMethods PyStrListProxy_sequence_methods = {
 };
 
 static PyTypeObject PyStrListProxyType = {
-  #if PY3K
   PyVarObject_HEAD_INIT(NULL, 0)
-  #else
-  PyObject_HEAD_INIT(NULL)
-  0,                          /*ob_size*/
-  #endif
   "astropy.wcs.StrListProxy", /*tp_name*/
   sizeof(PyStrListProxy),  /*tp_basicsize*/
   0,                          /*tp_itemsize*/

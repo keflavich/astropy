@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,32 +22,96 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: wcsutil.h,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: wcsutil.h,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *=============================================================================
+*
+* WCSLIB 7.3 - C routines that implement the FITS World Coordinate System
+* (WCS) standard.  Refer to the README file provided with WCSLIB for an
+* overview of the library.
+*
 *
 * Summary of the wcsutil routines
 * -------------------------------
-* Simple utility functions for internal use only by WCSLIB.  They are
-* documented here solely as an aid to understanding the code.  They are not
-* intended for external use - the API may change without notice!
+* Simple utility functions.  With the exception of wcsdealloc(), these
+* functions are intended for internal use only by WCSLIB.
+*
+* The internal-use functions are documented here solely as an aid to
+* understanding the code.  They are not intended for external use - the API
+* may change without notice!
+*
+*
+* wcsdealloc() - free memory allocated by WCSLIB functions
+* --------------------------------------------------------
+* wcsdealloc() invokes the free() system routine to free memory.
+* Specifically, it is intended to free memory allocated (using calloc()) by
+* certain WCSLIB functions (e.g. wcshdo(), wcsfixi(), fitshdr()), which it is
+* the user's responsibility to deallocate.
+*
+* In certain situations, for example multithreading, it may be important that
+* this be done within the WCSLIB sharable library's runtime environment.
+*
+* PLEASE NOTE: wcsdealloc() must not be used in place of the destructors for
+* particular structs, such as wcsfree(), celfree(), etc.
+*
+* Given and returned:
+*   ptr       void*     Address of the allocated memory.
+*
+* Function return value:
+*             void
+*
+*
+* wcsutil_strcvt() - Copy character string with padding
+* -----------------------------------------------------
+* INTERNAL USE ONLY.
+*
+* wcsutil_strcvt() copies one character string to another up to the specified
+* maximum number of characters.
+*
+* If the given string is null-terminated, then the terminating NULL character,
+* and all characters following it up to the specified maximum, are replaced
+* with the specified substitute character, either blank or NULL.
+*
+* If the source string is not null-terminated and the substitute character is
+* blank, then copy the maximum number of characters and do nothing further.
+* However, if the substitute character is NULL, then the last character and
+* all consecutive blank characters preceding it will be replaced with NULLs.
+*
+* Used by the Fortran wrapper functions in translating C strings into Fortran
+* CHARACTER variables and vice versa.
+*
+* Given:
+*   n         int       Maximum number of characters to copy.
+*
+*   c         char      Substitute character, either NULL or blank (anything
+*                       other than NULL).
+*
+*   src       const char[]
+*                       Character string to be copied.  Need not be
+*                       null-terminated.
+*
+* Returned:
+*   dst       char[]    Destination character string, which must be long
+*                       enough to hold n characters.  Note that this string
+*                       will not be null-terminated if the substitute
+*                       character is blank.
+*
+* Function return value:
+*             void
 *
 *
 * wcsutil_blank_fill() - Fill a character string with blanks
 * ----------------------------------------------------------
 * INTERNAL USE ONLY.
 *
-* wcsutil_blank_fill() pads a character string with blanks starting with the
-* terminating NULL character.
-*
-* Used by the Fortran wrapper functions in translating C character strings
-* into Fortran CHARACTER variables.
+* wcsutil_blank_fill() pads a character sub-string with blanks starting with
+* the terminating NULL character (if any).
 *
 * Given:
-*   n         int       Length of the character array, c[].
+*   n         int       Length of the sub-string.
 *
 * Given and returned:
-*   c         char[]    The character string.  It will not be null-terminated
-*                       on return.
+*   c         char[]    The character sub-string, which will not be
+*                       null-terminated on return.
 *
 * Function return value:
 *             void
@@ -57,18 +121,22 @@
 * --------------------------------------------------------
 * INTERNAL USE ONLY.
 *
-* wcsutil_null_fill() strips off trailing blanks and pads the character array
-* holding the string with NULL characters.
+* wcsutil_null_fill() strips trailing blanks from a string (or sub-string) and
+* propagates the terminating NULL character (if any) to the end of the string.
 *
-* Used mainly to make character strings intelligible in the GNU debugger which
-* prints the rubbish following the terminating NULL, obscuring the valid part
-* of the string.
+* If the string is not null-terminated, then the last character and all
+* consecutive blank characters preceding it will be replaced with NULLs.
+*
+* Mainly used in the C library to strip trailing blanks from FITS keyvalues.
+* Also used to make character strings intelligible in the GNU debugger, which
+* prints the rubbish following the terminating NULL character, thereby
+* obscuring the valid part of the string.
 *
 * Given:
 *   n         int       Number of characters.
 *
 * Given and returned:
-*   c         char[]    The character string.
+*   c         char[]    The character (sub-)string.
 *
 * Function return value:
 *             void
@@ -103,6 +171,74 @@
 *             int       Status return value:
 *                         0: Not all equal.
 *                         1: All equal.
+*
+*
+* wcsutil_Eq() - Test for equality of two double arrays
+* -----------------------------------------------------
+* INTERNAL USE ONLY.
+*
+* wcsutil_Eq() tests for equality of two double-precision arrays.
+*
+* Given:
+*   nelem     int       The number of elements in each array.
+*
+*   tol       double    Tolerance for comparison of the floating-point values.
+*                       For example, for tol == 1e-6, all floating-point
+*                       values in the arrays must be equal to the first 6
+*                       decimal places.  A value of 0 implies exact equality.
+*
+*   arr1      const double*
+*                       The first array.
+*
+*   arr2      const double*
+*                       The second array
+*
+* Function return value:
+*             int       Status return value:
+*                         0: Not equal.
+*                         1: Equal.
+*
+*
+* wcsutil_intEq() - Test for equality of two int arrays
+* -----------------------------------------------------
+* INTERNAL USE ONLY.
+*
+* wcsutil_intEq() tests for equality of two int arrays.
+*
+* Given:
+*   nelem     int       The number of elements in each array.
+*
+*   arr1      const int*
+*                       The first array.
+*
+*   arr2      const int*
+*                       The second array
+*
+* Function return value:
+*             int       Status return value:
+*                         0: Not equal.
+*                         1: Equal.
+*
+*
+* wcsutil_strEq() - Test for equality of two string arrays
+* --------------------------------------------------------
+* INTERNAL USE ONLY.
+*
+* wcsutil_strEq() tests for equality of two string arrays.
+*
+* Given:
+*   nelem     int       The number of elements in each array.
+*
+*   arr1      const char**
+*                       The first array.
+*
+*   arr2      const char**
+*                       The second array
+*
+* Function return value:
+*             int       Status return value:
+*                         0: Not equal.
+*                         1: Equal.
 *
 *
 * wcsutil_setAll() - Set a particular vector element
@@ -195,7 +331,7 @@
 * http://stackoverflow.com/questions/2741683/how-to-format-a-function-pointer
 *
 * Given:
-*   fptr      int(*)()  Pointer to function.
+*   fptr      void(*)() Pointer to function.
 *
 * Returned:
 *   hext      char[19]  Null-terminated string.  Should be at least 19 bytes
@@ -211,7 +347,9 @@
 * INTERNAL USE ONLY.
 *
 * wcsutil_double2str() converts a double to a string, but unlike sprintf() it
-* ignores the locale and always uses a '.' as the decimal separator.
+* ignores the locale and always uses a '.' as the decimal separator.  Also,
+* unless it includes an exponent, the formatted value will always have a
+* fractional part, ".0" being appended if necessary.
 *
 * Returned:
 *   buf       char *    The buffer to write the string into.
@@ -220,7 +358,10 @@
 *   format    char *    The formatting directive, such as "%f".  This
 *                       may be any of the forms accepted by sprintf(), but
 *                       should only include a formatting directive and
-*                       nothing else.
+*                       nothing else.  For "%g" and "%G" formats, unless it
+*                       includes an exponent, the formatted value will always
+*                       have a fractional part, ".0" being appended if
+*                       necessary.
 *
 *   value     double    The value to convert to a string.
 *
@@ -235,12 +376,24 @@
 * Given:
 *   buf       char *    The string containing the value
 *
-*   format    char *    The formatting directive, such as "%lf".  This
-*                       may be any of the forms accepted by sscanf(), but
-*                       should only include a single formatting directive.
-*
 * Returned:
 *   value     double *  The double value parsed from the string.
+*
+*
+* wcsutil_str2double2() - Translate string to doubles, ignoring the locale
+* ------------------------------------------------------------------------
+* INTERNAL USE ONLY.
+*
+* wcsutil_str2double2() converts a string to a pair of doubles containing the
+* integer and fractional parts.  Unlike sscanf() it ignores the locale and
+* always expects a '.' as the decimal separator.
+*
+* Given:
+*   buf       char *    The string containing the value
+*
+* Returned:
+*   value     double[2] The double value, split into integer and fractional
+*                       parts, parsed from the string.
 *
 *===========================================================================*/
 
@@ -251,16 +404,25 @@
 extern "C" {
 #endif
 
+void wcsdealloc(void *ptr);
+
+void wcsutil_strcvt(int n, char c, const char src[], char dst[]);
+
 void wcsutil_blank_fill(int n, char c[]);
 void wcsutil_null_fill (int n, char c[]);
 
 int  wcsutil_allEq (int nvec, int nelem, const double *first);
+int  wcsutil_Eq(int nelem, double tol, const double *arr1,
+                const double *arr2);
+int  wcsutil_intEq(int nelem, const int *arr1, const int *arr2);
+int  wcsutil_strEq(int nelem, char (*arr1)[72], char (*arr2)[72]);
 void wcsutil_setAll(int nvec, int nelem, double *first);
 void wcsutil_setAli(int nvec, int nelem, int *first);
 void wcsutil_setBit(int nelem, const int *sel, int bits, int *array);
-char *wcsutil_fptr2str(int (*func)(void), char hext[19]);
-int  wcsutil_str2double(const char *buf, const char *format, double *value);
+char *wcsutil_fptr2str(void (*fptr)(void), char hext[19]);
 void wcsutil_double2str(char *buf, const char *format, double value);
+int  wcsutil_str2double(const char *buf, double *value);
+int  wcsutil_str2double2(const char *buf, double *value);
 
 #ifdef __cplusplus
 }

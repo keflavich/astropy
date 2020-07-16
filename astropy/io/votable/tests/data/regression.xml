@@ -12,7 +12,7 @@ The VOTable format is an XML standard for the interchange of data represented as
 <PARAM datatype="float" name="INPUT" value="0.000000,0.000000" arraysize="*" unit="km/h" ucd="phys.size;instr.tel">
   <DESCRIPTION>This is the most interesting parameter in the world, and it drinks Dos Equis</DESCRIPTION>
 </PARAM>
-<INFO name="QUERY_STATUS" value="OK">This is some information.</INFO>
+<INFO ID="QUERY_STATUS" name="QUERY_STATUS" value="OK">This is some information.</INFO>
 <RESOURCE type="results">
 <DESCRIPTION>
   This is a resource description
@@ -26,7 +26,7 @@ The VOTable format is an XML standard for the interchange of data represented as
 <DESCRIPTION>
   This describes the table.
 </DESCRIPTION>
-<INFO name="Error" value="One might expect to find some INFO here, too..."/>
+<INFO name="Error" ID="ErrorInfo" value="One might expect to find some INFO here, too..."/>
 <GROUP>
   <PARAMref ref="awesome"/>
 </GROUP>
@@ -40,7 +40,9 @@ The VOTable format is an XML standard for the interchange of data represented as
 <LINK href="http://tabledata.org/"/>
 <FIELD ID="string_array_test" name="string array test" datatype="string" arraysize="4*"/>
 <FIELD ID="unsignedByte" name="unsignedByte" datatype="unsignedByte"/>
-<FIELD ID="short" name="short" datatype="short"/>
+<FIELD ID="short" name="short" datatype="short">
+  <VALUES null="-32769"/>
+</FIELD>
 <FIELD ID="int" name="int" datatype="int" utype="myint">
   <VALUES null="123456789" ID="int_nulls">
     <MIN value="-1000" inclusive="no"/>
@@ -110,7 +112,7 @@ The VOTable format is an XML standard for the interchange of data represented as
   <TD>4096</TD>
   <TD>268435456</TD>
   <TD>922337203685477</TD>
-  <TD>8.999999</TD>
+  <TD>8.9990234375</TD>
   <TD encoding="base64">P4AAAA==</TD>
   <TD>   </TD>
   <TD>1</TD>
@@ -270,7 +272,7 @@ The VOTable format is an XML standard for the interchange of data represented as
   <TD>4096</TD>
   <TD>268435456</TD>
   <TD>922337203685477</TD>
-  <TD>8.999999</TD>
+  <TD>8.9990234375</TD>
   <TD encoding="base64">P4AAAA==</TD>
   <TD>   </TD>
   <TD>1</TD>

@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,31 +22,32 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: wcsunits.h,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: wcsunits.h,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *=============================================================================
 *
-* WCSLIB 4.17 - C routines that implement the FITS World Coordinate System
-* (WCS) standard.  Refer to
-*
-*   "Representations of world coordinates in FITS",
-*   Greisen, E.W., & Calabretta, M.R. 2002, A&A, 395, 1061 (Paper I)
-*
-* The Flexible Image Transport System (FITS), a data format widely used in
-* astronomy for data interchange and archive, is described in
-*
-*   "Definition of The Flexible Image Transport System (FITS)",
-*   Hanisch, R.J., Farris, A., Greisen, E.W., et al. 2001, A&A, 376, 359
-*
-* which formalizes NOST 100-2.0, a document produced by the NASA/Science
-* Office of Standards and Technology, see http://fits.gsfc.nasa.gov.
-*
-* Refer to the README file provided with WCSLIB for an overview of the
-* library.
+* WCSLIB 7.3 - C routines that implement the FITS World Coordinate System
+* (WCS) standard.  Refer to the README file provided with WCSLIB for an
+* overview of the library.
 *
 *
 * Summary of the wcsunits routines
 * --------------------------------
-* Routines in this suite deal with units specifications and conversions:
+* Routines in this suite deal with units specifications and conversions, as
+* described in
+*
+=   "Representations of world coordinates in FITS",
+=   Greisen, E.W., & Calabretta, M.R. 2002, A&A, 395, 1061 (WCS Paper I)
+*
+* The Flexible Image Transport System (FITS), a data format widely used in
+* astronomy for data interchange and archive, is described in
+*
+=   "Definition of the Flexible Image Transport System (FITS), version 3.0",
+=   Pence, W.D., Chiappetti, L., Page, C.G., Shaw, R.A., & Stobie, E. 2010,
+=   A&A, 524, A42 - http://dx.doi.org/10.1051/0004-6361/201015362
+*
+* See also http://fits.gsfc.nasa.gov
+*
+* These routines perform basic units-related operations:
 *
 *   - wcsunitse(): given two unit specifications, derive the conversion from
 *     one to the other.
@@ -137,7 +138,7 @@
 *   unitstr   char []   Null-terminated character array containing the units
 *                       specification to be translated.
 *
-*                       Inline units specifications in the a FITS header
+*                       Inline units specifications in a FITS header
 *                       keycomment are also handled.  If the first non-blank
 *                       character in unitstr is '[' then the unit string is
 *                       delimited by its matching ']'.  Blanks preceding '['
@@ -158,7 +159,7 @@
 *                         0: Success.
 *                         9: Internal parser error.
 *                        12: Potentially unsafe translation, whether applied
-*                             or not (see notes).
+*                            or not (see notes).
 *
 * Notes:
 *   Translation of non-standard unit specifications: apart from leading and
@@ -175,7 +176,7 @@
 =     beam       BEAM
 =     byte       Byte
 =     d          day, days, (D), DAY, DAYS
-=     deg        degree, degrees, DEG, DEGREE, DEGREES
+=     deg        degree, degrees, Deg, Degree, Degrees, DEG, DEGREE, DEGREES
 =     GHz        GHZ
 =     h          hr, (H), HR
 =     Hz         hz, HZ

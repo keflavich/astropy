@@ -8,10 +8,18 @@ between coordinate systems.
 
 from .errors import *
 from .angles import *
-from .coordsystems import *
+from .baseframe import *
+from .attributes import *
 from .distances import *
+from .earth import *
 from .transformations import *
-from .builtin_systems import *
+from .builtin_frames import *
 from .name_resolve import *
-
-__doc__ += builtin_systems._transform_graph_docs
+from .matching import *
+from .representation import *
+from .sky_coordinate import *
+from .funcs import *
+from .calculation import *
+from .solar_system import *
+from .spectral_quantity import *
+from .spectral_coordinate import *

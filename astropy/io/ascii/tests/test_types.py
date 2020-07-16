@@ -1,30 +1,20 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-import re
-import sys
-import glob
-import math
 
-import numpy as np
 
-try:
-    import StringIO as io
-except ImportError:
-    import io
+from io import StringIO
 
-from ....tests.helper import pytest
-from ... import ascii as asciitable
+from astropy.io import ascii
 
-from .common import (raises, numpy_lt_1p5,
-                     assert_equal, assert_almost_equal, assert_true,
-                     setup_function, teardown_function)
+from .common import assert_equal
+
 
 def test_types_from_dat():
-    converters = {'a': [asciitable.convert_numpy(np.float)],
-                  'e': [asciitable.convert_numpy(np.str)]}
+    converters = {'a': [ascii.convert_numpy(float)],
+                  'e': [ascii.convert_numpy(str)]}
 
-    dat = asciitable.read(['a b c d e', '1 1 cat 2.1 4.2'],
-                          Reader=asciitable.Basic,
-                          converters=converters)
+    dat = ascii.read(['a b c d e', '1 1 cat 2.1 4.2'],
+                     Reader=ascii.Basic,
+                     converters=converters)
 
     assert dat['a'].dtype.kind == 'f'
     assert dat['b'].dtype.kind == 'i'
@@ -34,15 +24,14 @@ def test_types_from_dat():
 
 
 def test_rdb_write_types():
-    dat = asciitable.read(['a b c d', '1 1.0 cat 2.1'],
-                          Reader=asciitable.Basic)
-    out = io.StringIO()
-    asciitable.write(dat, out, Writer=asciitable.Rdb)
+    dat = ascii.read(['a b c d', '1 1.0 cat 2.1'],
+                     Reader=ascii.Basic)
+    out = StringIO()
+    ascii.write(dat, out, Writer=ascii.Rdb)
     outs = out.getvalue().splitlines()
     assert_equal(outs[1], 'N\tN\tS\tN')
 
 
-@pytest.mark.xfail('numpy_lt_1p5')
 def test_ipac_read_types():
     table = r"""\
 |     ra   |    dec   |   sai   |-----v2---|    sptype        |
@@ -51,12 +40,12 @@ def test_ipac_read_types():
 |    null  |   null   |   null  |    null  |     -999         |
    2.09708   2956        73765    2.06000   B8IVpMnHg
 """
-    reader = asciitable.get_reader(Reader=asciitable.Ipac)
-    dat = reader.read(table)
-    types = [asciitable.FloatType,
-             asciitable.FloatType,
-             asciitable.IntType,
-             asciitable.FloatType,
-             asciitable.StrType]
+    reader = ascii.get_reader(Reader=ascii.Ipac)
+    reader.read(table)
+    types = [ascii.FloatType,
+             ascii.FloatType,
+             ascii.IntType,
+             ascii.FloatType,
+             ascii.StrType]
     for (col, expected_type) in zip(reader.cols, types):
         assert_equal(col.type, expected_type)

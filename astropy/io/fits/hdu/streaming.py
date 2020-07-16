@@ -3,16 +3,16 @@
 import gzip
 import os
 
-from ..file import _File
-from ..header import _pad_length
-from .base import _BaseHDU
+from .base import _BaseHDU, BITPIX2DTYPE
 from .hdulist import HDUList
-from .image import PrimaryHDU, _ImageBaseHDU
-from ..util import fileobj_name
+from .image import PrimaryHDU
+
+from astropy.io.fits.file import _File
+from astropy.io.fits.header import _pad_length
+from astropy.io.fits.util import fileobj_name
 
 
-
-class StreamingHDU(object):
+class StreamingHDU:
     """
     A class that provides the capability to stream data to a FITS file
     instead of requiring data to all be written at once.
@@ -39,9 +39,9 @@ class StreamingHDU(object):
         Parameters
         ----------
         name : file path, file object, or file like object
-            The file to which the header and data will be streamed.
-            If opened, the file object must be opened for append
-            (ab+).
+            The file to which the header and data will be streamed.  If opened,
+            the file object must be opened in a writeable binary mode such as
+            'wb' or 'ab+'.
 
         header : `Header` instance
             The header object associated with the data to be written
@@ -69,12 +69,12 @@ class StreamingHDU(object):
 
         # handle a file object instead of a file name
         filename = fileobj_name(name) or ''
-#
-#       Check if the file already exists.  If it does not, check to see
-#       if we were provided with a Primary Header.  If not we will need
-#       to prepend a default PrimaryHDU to the file before writing the
-#       given header.
-#
+
+        # Check if the file already exists.  If it does not, check to see
+        # if we were provided with a Primary Header.  If not we will need
+        # to prepend a default PrimaryHDU to the file before writing the
+        # given header.
+
         newfile = False
 
         if filename:
@@ -88,11 +88,11 @@ class StreamingHDU(object):
                 hdulist = HDUList([PrimaryHDU()])
                 hdulist.writeto(name, 'exception')
         else:
-#
-#               This will not be the first extension in the file so we
-#               must change the Primary header provided into an image
-#               extension header.
-#
+
+            # This will not be the first extension in the file so we
+            # must change the Primary header provided into an image
+            # extension header.
+
             if 'SIMPLE' in self._header:
                 self._header.set('XTENSION', 'IMAGE', 'Image extension',
                                  after='SIMPLE')
@@ -121,8 +121,8 @@ class StreamingHDU(object):
         # values to be modified in undesired ways...need to have a better way
         # of doing this
         tmp_hdu._header = self._header
-        self._hdrLoc = tmp_hdu._writeheader(self._ffo)[0]
-        self._datLoc = self._ffo.tell()
+        self._header_offset = tmp_hdu._writeheader(self._ffo)[0]
+        self._data_offset = self._ffo.tell()
         self._size = self.size
 
         if self._size != 0:
@@ -154,43 +154,38 @@ class StreamingHDU(object):
 
         Notes
         -----
-        Only the amount of data specified in the header provided to
-        the class constructor may be written to the stream.  If the
-        provided data would cause the stream to overflow, an `IOError`
-        exception is raised and the data is not written.  Once
-        sufficient data has been written to the stream to satisfy the
-        amount specified in the header, the stream is padded to fill a
-        complete FITS block and no more data will be accepted.  An
-        attempt to write more data after the stream has been filled
-        will raise an `IOError` exception.  If the dtype of the input
-        data does not match what is expected by the header, a
-        `TypeError` exception is raised.
+        Only the amount of data specified in the header provided to the class
+        constructor may be written to the stream.  If the provided data would
+        cause the stream to overflow, an `OSError` exception is
+        raised and the data is not written. Once sufficient data has been
+        written to the stream to satisfy the amount specified in the header,
+        the stream is padded to fill a complete FITS block and no more data
+        will be accepted. An attempt to write more data after the stream has
+        been filled will raise an `OSError` exception. If the
+        dtype of the input data does not match what is expected by the header,
+        a `TypeError` exception is raised.
         """
 
-        curDataSize = self._ffo.tell() - self._datLoc
+        size = self._ffo.tell() - self._data_offset
 
-        if self.writecomplete or curDataSize + data.nbytes > self._size:
-            raise IOError('Attempt to write more data to the stream than the '
+        if self.writecomplete or size + data.nbytes > self._size:
+            raise OSError('Attempt to write more data to the stream than the '
                           'header specified.')
 
-        if _ImageBaseHDU.NumCode[self._header['BITPIX']] != data.dtype.name:
+        if BITPIX2DTYPE[self._header['BITPIX']] != data.dtype.name:
             raise TypeError('Supplied data does not match the type specified '
                             'in the header.')
 
         if data.dtype.str[0] != '>':
-#
-#           byteswap little endian arrays before writing
-#
+            # byteswap little endian arrays before writing
             output = data.byteswap()
         else:
             output = data
 
         self._ffo.writearray(output)
 
-        if self._ffo.tell() - self._datLoc == self._size:
-#
-#           the stream is full so pad the data to the next FITS block
-#
+        if self._ffo.tell() - self._data_offset == self._size:
+            # the stream is full so pad the data to the next FITS block
             self._ffo.write(_pad_length(self._size) * '\0')
             self.writecomplete = True
 

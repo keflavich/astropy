@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,7 +22,7 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: wcstrig.c,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: wcstrig.c,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *===========================================================================*/
 
 #include <math.h>
@@ -30,9 +30,7 @@
 #include "wcsmath.h"
 #include "wcstrig.h"
 
-double cosd(angle)
-
-double angle;
+double cosd(double angle)
 
 {
   int i;
@@ -56,9 +54,7 @@ double angle;
 
 /*--------------------------------------------------------------------------*/
 
-double sind(angle)
-
-double angle;
+double sind(double angle)
 
 {
   int i;
@@ -121,9 +117,7 @@ void sincosd(double angle, double *s, double *c)
 
 /*--------------------------------------------------------------------------*/
 
-double tand(angle)
-
-double angle;
+double tand(double angle)
 
 {
   double resid;
@@ -142,9 +136,7 @@ double angle;
 
 /*--------------------------------------------------------------------------*/
 
-double acosd(v)
-
-double v;
+double acosd(double v)
 
 {
   if (v >= 1.0) {
@@ -160,9 +152,7 @@ double v;
 
 /*--------------------------------------------------------------------------*/
 
-double asind(v)
-
-double v;
+double asind(double v)
 
 {
   if (v <= -1.0) {
@@ -178,9 +168,7 @@ double v;
 
 /*--------------------------------------------------------------------------*/
 
-double atand(v)
-
-double v;
+double atand(double v)
 
 {
   if (v == -1.0) {
@@ -196,9 +184,7 @@ double v;
 
 /*--------------------------------------------------------------------------*/
 
-double atan2d(y, x)
-
-double x, y;
+double atan2d(double y, double x)
 
 {
   if (y == 0.0) {

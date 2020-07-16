@@ -1,304 +1,97 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
 """
-This module prvoides the tools used to internally run the astropy test suite
+This module provides the tools used to internally run the astropy test suite
 from the installed astropy.  It makes use of the `pytest` testing framework.
 """
-
-import shlex
-import sys
-import base64
-import zlib
-import functools
 import os
-import subprocess
-import shutil
-import tempfile
+import sys
+import types
+import pickle
+import warnings
+import functools
+from distutils.version import LooseVersion
+
+import pytest
 
 try:
     # Import pkg_resources to prevent it from issuing warnings upon being
     # imported from within py.test.  See
     # https://github.com/astropy/astropy/pull/537 for a detailed explanation.
-    import pkg_resources
+    import pkg_resources  # pylint: disable=W0611  # noqa
 except ImportError:
     pass
 
-from distutils.core import Command
+from astropy.units import allclose as quantity_allclose  # noqa
+from astropy.utils.exceptions import (AstropyDeprecationWarning,
+                                      AstropyPendingDeprecationWarning)
 
-from .. import test
 
-if os.environ.get('ASTROPY_USE_SYSTEM_PYTEST') or '_pytest' in sys.modules:
-    import pytest
+# For backward-compatibility with affiliated packages
+from .runner import TestRunner  # pylint: disable=W0611  # noqa
 
-else:
-    from ..extern import pytest as extern_pytest
-
-    if sys.version_info >= (3, 0):
-        exec("def do_exec_def(co, loc): exec(co, loc)\n")
-        extern_pytest.do_exec = do_exec_def
-
-        import pickle
-        unpacked_sources = extern_pytest.sources.encode("ascii")
-        unpacked_sources = pickle.loads(
-            zlib.decompress(base64.decodebytes(unpacked_sources)))
-    else:
-        exec("def do_exec_def(co, loc): exec co in loc\n")
-        extern_pytest.do_exec = do_exec_def
-
-        import cPickle as pickle
-        unpacked_sources = pickle.loads(
-            zlib.decompress(base64.decodestring(extern_pytest.sources)))
-
-    importer = extern_pytest.DictImporter(unpacked_sources)
-    sys.meta_path.append(importer)
-
-    pytest = importer.load_module('pytest')
-
+__all__ = ['raises', 'enable_deprecations_as_exceptions', 'remote_data',
+           'treat_deprecations_as_exceptions', 'catch_warnings',
+           'assert_follows_unicode_guidelines',
+           'assert_quantity_allclose', 'check_pickling_recovery',
+           'pickle_protocol', 'generic_recursive_equality_test']
 
 # pytest marker to mark tests which get data from the web
+# This is being maintained for backwards compatibility
 remote_data = pytest.mark.remote_data
 
 
-class TestRunner(object):
-    def __init__(self, base_path):
-        self.base_path = base_path
+# distutils expects options to be Unicode strings
+def _fix_user_options(options):
+    def to_str_or_none(x):
+        if x is None:
+            return None
+        return str(x)
 
-    def run_tests(self, package=None, test_path=None, args=None, plugins=None,
-                  verbose=False, pastebin=None, remote_data=False, pep8=False,
-                  pdb=False, coverage=False, open_files=False):
-        """
-        The docstring for this method lives in astropy/__init__.py:test
-        """
-        if package is None:
-            package_path = self.base_path
-        else:
-            package_path = os.path.join(self.base_path,
-                                        package.replace('.', os.path.sep))
-
-            if not os.path.isdir(package_path):
-                raise ValueError('Package not found: {0}'.format(package))
-
-        if test_path:
-            package_path = os.path.join(package_path,
-                                        os.path.abspath(test_path))
-
-        all_args = package_path
-
-        # add any additional args entered by the user
-        if args is not None:
-            all_args += ' {0}'.format(args)
-
-        # add verbosity flag
-        if verbose:
-            all_args += ' -v'
-
-        # turn on pastebin output
-        if pastebin is not None:
-            if pastebin in ['failed', 'all']:
-                all_args += ' --pastebin={0}'.format(pastebin)
-            else:
-                raise ValueError("pastebin should be 'failed' or 'all'")
-
-        # run @remote_data tests
-        if remote_data:
-            all_args += ' --remote-data'
-
-        if pep8:
-            try:
-                import pytest_pep8
-            except ImportError:
-                raise ImportError('PEP8 checking requires pytest-pep8 plugin: '
-                                  'http://pypi.python.org/pypi/pytest-pep8')
-            else:
-                all_args += ' --pep8 -k pep8'
-
-        # activate post-mortem PDB for failing tests
-        if pdb:
-            all_args += ' --pdb'
-
-        if coverage:
-            try:
-                import pytest_cov
-            except ImportError:
-                raise ImportError(
-                    'Coverage reporting requires pytest-cov plugin: '
-                    'http://pypi.python.org/pypi/pytest-cov')
-            else:
-                # Don't use get_pkg_data_filename here, because it
-                # requires importing astropy.config and thus screwing
-                # up coverage results for those packages.
-                coveragerc = os.path.join(
-                    os.path.dirname(__file__), 'coveragerc')
-
-                # We create a coveragerc that is specific to the version
-                # of Python we're running, so that we can mark branches
-                # as being specifically for Python 2 or Python 3
-                with open(coveragerc, 'r') as fd:
-                    coveragerc_content = fd.read()
-                if sys.version_info[0] >= 3:
-                    ignore_python_version = '2'
-                else:
-                    ignore_python_version = '3'
-                coveragerc_content = coveragerc_content.replace(
-                    "{ignore_python_version}", ignore_python_version)
-                with tempfile.NamedTemporaryFile(delete=False) as tmp:
-                    tmp.write(coveragerc_content)
-
-                all_args += (
-                    ' --cov-report html --cov astropy'
-                    ' --cov-config {0}'.format(tmp.name))
-
-        # check for opened files after each test
-        if open_files:
-            try:
-                subproc = subprocess.Popen(
-                    ['lsof -F0 -n -p {0}'.format(os.getpid())],
-                    shell=True, stdout=subprocess.PIPE)
-                output = subproc.communicate()[0].strip()
-            except subprocess.CalledProcessError:
-                raise SystemError(
-                    "open file detection requested, but could not "
-                    "successfully run the 'lsof' command")
-
-            all_args += ' --open-files'
-
-            print("Checking for unclosed files")
-
-        try:
-            all_args = shlex.split(
-                all_args, posix=not sys.platform.startswith('win'))
-
-            result = pytest.main(args=all_args, plugins=plugins)
-        finally:
-            if coverage:
-                if not tmp.closed:
-                    tmp.close()
-                os.remove(tmp.name)
-
-        return result
-
-    run_tests.__doc__ = test.__doc__
+    return [tuple(to_str_or_none(x) for x in y) for y in options]
 
 
-class astropy_test(Command, object):
-    user_options = [
-        ('package=', 'P',
-         "The name of a specific package to test, e.g. 'io.fits' or 'utils'.  "
-         "If nothing is specified all default Astropy tests are run."),
-        ('test-path=', 't', 'Specify a test location by path. Must be '
-         'specified absolutely or relative to the current directory. '
-         'May be a single file or directory.'),
-        ('verbose-results', 'V',
-         'Turn on verbose output from pytest. Same as specifying `-v` in '
-         '`args`.'),
-        ('plugins=', 'p',
-         'Plugins to enable when running pytest.  Same as specifying `-p` in '
-         '`args`.'),
-        ('pastebin=', 'b',
-         "Enable pytest pastebin output. Either 'all' or 'failed'."),
-        ('args=', 'a', 'Additional arguments to be passed to pytest'),
-        ('remote-data', 'R', 'Run tests that download remote data'),
-        ('pep8', '8', 'Enable PEP8 checking and disable regular tests. '
-         'Same as specifying `--pep8 -k pep8` in `args`. Requires the '
-         'pytest-pep8 plugin.'),
-        ('pdb', 'd', 'Turn on PDB post-mortem analysis for failing tests. '
-         'Same as specifying `--pdb` in `args`.'),
-        ('coverage', 'c', 'Create a coverage report. Requires the pytest-cov '
-         'plugin is installed'),
-        ('open-files', 'o', 'Fail if any tests leave files open')
-    ]
+def _save_coverage(cov, result, rootdir, testing_path):
+    """
+    This method is called after the tests have been run in coverage mode
+    to cleanup and then save the coverage data and report.
+    """
+    from astropy.utils.console import color_print
 
-    package_name = None
+    if result != 0:
+        return
 
-    def initialize_options(self):
-        self.package = None
-        self.test_path = None
-        self.verbose_results = False
-        self.plugins = None
-        self.pastebin = None
-        self.args = None
-        self.remote_data = False
-        self.pep8 = False
-        self.pdb = False
-        self.coverage = False
-        self.open_files = False
+    # The coverage report includes the full path to the temporary
+    # directory, so we replace all the paths with the true source
+    # path. Note that this will not work properly for packages that still
+    # rely on 2to3.
+    try:
+        # Coverage 4.0: _harvest_data has been renamed to get_data, the
+        # lines dict is private
+        cov.get_data()
+    except AttributeError:
+        # Coverage < 4.0
+        cov._harvest_data()
+        lines = cov.data.lines
+    else:
+        lines = cov.data._lines
 
-    def finalize_options(self):
-        # Normally we would validate the options here, but that's handled in
-        # run_tests
-        pass
+    for key in list(lines.keys()):
+        new_path = os.path.relpath(
+            os.path.realpath(key),
+            os.path.realpath(testing_path))
+        new_path = os.path.abspath(
+            os.path.join(rootdir, new_path))
+        lines[new_path] = lines.pop(key)
 
-    def run(self):
-        self.reinitialize_command('build', inplace=False)
-        self.run_command('build')
-        build_cmd = self.get_finalized_command('build')
-        new_path = os.path.abspath(build_cmd.build_lib)
+    color_print('Saving coverage data in .coverage...', 'green')
+    cov.save()
 
-        # Copy the build to a temporary directory for the purposes of testing
-        # - this avoids creating pyc and __pycache__ directories inside the
-        # build directory
-        tmp_dir = tempfile.mkdtemp(prefix='astropy-test-')
-        testing_path = os.path.join(tmp_dir, os.path.basename(new_path))
-        shutil.copytree(new_path, testing_path)
-
-        try:
-
-            # Run the tests in a subprocess--this is necessary since new extension
-            # modules may have appeared, and this is the easiest way to set up a
-            # new environment
-
-            # We need to set a flag in the child's environment so that
-            # unnecessary code is not imported before py.test can start
-            # up, otherwise the coverage results will be artifically low.
-            if sys.version_info[0] >= 3:
-                set_flag = "import builtins; builtins._ASTROPY_TEST_ = True"
-            else:
-                set_flag = "import __builtin__; __builtin__._ASTROPY_TEST_ = True"
-
-            cmd = ('{0}; import {1.package_name}, sys; sys.exit('
-                   '{1.package_name}.test('
-                   'package={1.package!r}, '
-                   'test_path={1.test_path!r}, '
-                   'args={1.args!r}, '
-                   'plugins={1.plugins!r}, '
-                   'verbose={1.verbose_results!r}, '
-                   'pastebin={1.pastebin!r}, '
-                   'remote_data={1.remote_data!r}, '
-                   'pep8={1.pep8!r}, '
-                   'pdb={1.pdb!r}, '
-                   'coverage={1.coverage!r}, '
-                   'open_files={1.open_files!r}))')
-            cmd = cmd.format(set_flag, self)
-
-            #override the config locations to not make a new directory nor use
-            #existing cache or config
-            os.environ['XDG_CONFIG_HOME'] = tempfile.mkdtemp('astropy_config')
-            os.environ['XDG_CACHE_HOME'] = tempfile.mkdtemp('astropy_cache')
-            os.mkdir(os.path.join(os.environ['XDG_CONFIG_HOME'], 'astropy'))
-            os.mkdir(os.path.join(os.environ['XDG_CACHE_HOME'], 'astropy'))
-
-            try:
-                retcode = subprocess.call([sys.executable, '-c', cmd],
-                                          cwd=testing_path, close_fds=False)
-            finally:
-                # kill the temporary dirs
-                shutil.rmtree(os.environ['XDG_CONFIG_HOME'])
-                shutil.rmtree(os.environ['XDG_CACHE_HOME'])
-
-            if self.coverage and retcode == 0:
-                # Copy the htmlcov from build/lib.../htmlcov to a more
-                # obvious place
-                if os.path.exists('htmlcov'):
-                    shutil.rmtree('htmlcov')
-                shutil.copytree(os.path.join(testing_path, 'htmlcov'), 'htmlcov')
-
-        finally:
-
-            # Remove temporary directory
-            shutil.rmtree(tmp_dir)
-
-        raise SystemExit(retcode)
+    color_print('Saving HTML coverage report in htmlcov...', 'green')
+    cov.html_report(directory=os.path.join(rootdir, 'htmlcov'))
 
 
+# TODO: Plan a roadmap of deprecation as pytest.raises has matured over the years.
+# See https://github.com/astropy/astropy/issues/6761
 class raises:
     """
     A decorator to mark that a test should raise a given exception.
@@ -307,13 +100,394 @@ class raises:
         @raises(ZeroDivisionError)
         def test_foo():
             x = 1/0
+
+    This can also be used a context manager, in which case it is just
+    an alias for the ``pytest.raises`` context manager (because the
+    two have the same name this help avoid confusion by being
+    flexible).
+
+    .. note:: Usage of ``pytest.raises`` is preferred.
+
     """
+
     # pep-8 naming exception -- this is a decorator class
     def __init__(self, exc):
         self._exc = exc
+        self._ctx = None
 
     def __call__(self, func):
         @functools.wraps(func)
         def run_raises_test(*args, **kwargs):
             pytest.raises(self._exc, func, *args, **kwargs)
         return run_raises_test
+
+    def __enter__(self):
+        self._ctx = pytest.raises(self._exc)
+        return self._ctx.__enter__()
+
+    def __exit__(self, *exc_info):
+        return self._ctx.__exit__(*exc_info)
+
+
+_deprecations_as_exceptions = False
+_include_astropy_deprecations = True
+_modules_to_ignore_on_import = set([
+    r'compiler',  # A deprecated stdlib module used by py.test
+    r'scipy',
+    r'pygments',
+    r'ipykernel',
+    r'IPython',   # deprecation warnings for async and await
+    r'setuptools'])
+_warnings_to_ignore_entire_module = set([])
+_warnings_to_ignore_by_pyver = {
+    None: set([  # Python version agnostic
+        # https://github.com/astropy/astropy/pull/7372
+        (r"Importing from numpy\.testing\.decorators is deprecated, "
+         r"import from numpy\.testing instead\.", DeprecationWarning),
+        # inspect raises this slightly different warning on Python 3.6-3.7.
+        # Keeping it since e.g. lxml as of 3.8.0 is still calling getargspec()
+        (r"inspect\.getargspec\(\) is deprecated, use "
+         r"inspect\.signature\(\) or inspect\.getfullargspec\(\)",
+         DeprecationWarning),
+        # https://github.com/astropy/pytest-doctestplus/issues/29
+        (r"split\(\) requires a non-empty pattern match", FutureWarning),
+        # Package resolution warning that we can do nothing about
+        (r"can't resolve package from __spec__ or __package__, "
+         r"falling back on __name__ and __path__", ImportWarning)]),
+    (3, 7): set([
+        # Deprecation warning for collections.abc, fixed in Astropy but still
+        # used in lxml, and maybe others
+        (r"Using or importing the ABCs from 'collections'",
+         DeprecationWarning)])
+}
+
+
+def enable_deprecations_as_exceptions(include_astropy_deprecations=True,
+                                      modules_to_ignore_on_import=[],
+                                      warnings_to_ignore_entire_module=[],
+                                      warnings_to_ignore_by_pyver={}):
+    """
+    Turn on the feature that turns deprecations into exceptions.
+
+    Parameters
+    ----------
+    include_astropy_deprecations : bool
+        If set to `True`, ``AstropyDeprecationWarning`` and
+        ``AstropyPendingDeprecationWarning`` are also turned into exceptions.
+
+    modules_to_ignore_on_import : list of str
+        List of additional modules that generate deprecation warnings
+        on import, which are to be ignored. By default, these are already
+        included: ``compiler``, ``scipy``, ``pygments``, ``ipykernel``, and
+        ``setuptools``.
+
+    warnings_to_ignore_entire_module : list of str
+        List of modules with deprecation warnings to ignore completely,
+        not just during import. If ``include_astropy_deprecations=True``
+        is given, ``AstropyDeprecationWarning`` and
+        ``AstropyPendingDeprecationWarning`` are also ignored for the modules.
+
+    warnings_to_ignore_by_pyver : dict
+        Dictionary mapping tuple of ``(major, minor)`` Python version to
+        a list of ``(warning_message, warning_class)`` to ignore.
+        Python version-agnostic warnings should be mapped to `None` key.
+        This is in addition of those already ignored by default
+        (see ``_warnings_to_ignore_by_pyver`` values).
+
+    """
+    global _deprecations_as_exceptions
+    _deprecations_as_exceptions = True
+
+    global _include_astropy_deprecations
+    _include_astropy_deprecations = include_astropy_deprecations
+
+    global _modules_to_ignore_on_import
+    _modules_to_ignore_on_import.update(modules_to_ignore_on_import)
+
+    global _warnings_to_ignore_entire_module
+    _warnings_to_ignore_entire_module.update(warnings_to_ignore_entire_module)
+
+    global _warnings_to_ignore_by_pyver
+    for key, val in warnings_to_ignore_by_pyver.items():
+        if key in _warnings_to_ignore_by_pyver:
+            _warnings_to_ignore_by_pyver[key].update(val)
+        else:
+            _warnings_to_ignore_by_pyver[key] = set(val)
+
+
+def treat_deprecations_as_exceptions():
+    """
+    Turn all DeprecationWarnings (which indicate deprecated uses of
+    Python itself or Numpy, but not within Astropy, where we use our
+    own deprecation warning class) into exceptions so that we find
+    out about them early.
+
+    This completely resets the warning filters and any "already seen"
+    warning state.
+    """
+    # First, totally reset the warning state. The modules may change during
+    # this iteration thus we copy the original state to a list to iterate
+    # on. See https://github.com/astropy/astropy/pull/5513.
+    for module in list(sys.modules.values()):
+        # We don't want to deal with six.MovedModules, only "real"
+        # modules. FIXME: we no more use six, this should be useless ?
+        if (isinstance(module, types.ModuleType) and
+                hasattr(module, '__warningregistry__')):
+            del module.__warningregistry__
+
+    if not _deprecations_as_exceptions:
+        return
+
+    warnings.resetwarnings()
+
+    # Hide the next couple of DeprecationWarnings
+    warnings.simplefilter('ignore', DeprecationWarning)
+    # Here's the wrinkle: a couple of our third-party dependencies
+    # (py.test and scipy) are still using deprecated features
+    # themselves, and we'd like to ignore those.  Fortunately, those
+    # show up only at import time, so if we import those things *now*,
+    # before we turn the warnings into exceptions, we're golden.
+    for m in _modules_to_ignore_on_import:
+        try:
+            __import__(m)
+        except ImportError:
+            pass
+
+    # Now, start over again with the warning filters
+    warnings.resetwarnings()
+    # Now, turn these warnings into exceptions
+    _all_warns = [DeprecationWarning, FutureWarning, ImportWarning]
+
+    # Only turn astropy deprecation warnings into exceptions if requested
+    if _include_astropy_deprecations:
+        _all_warns += [AstropyDeprecationWarning,
+                       AstropyPendingDeprecationWarning]
+
+    for w in _all_warns:
+        warnings.filterwarnings("error", ".*", w)
+
+    # This ignores all specified warnings from given module(s),
+    # not just on import, for use of Astropy affiliated packages.
+    for m in _warnings_to_ignore_entire_module:
+        for w in _all_warns:
+            warnings.filterwarnings('ignore', category=w, module=m)
+
+    # This ignores only specified warnings by Python version, if applicable.
+    for v in _warnings_to_ignore_by_pyver:
+        if v is None or sys.version_info[:2] == v:
+            for s in _warnings_to_ignore_by_pyver[v]:
+                warnings.filterwarnings("ignore", s[0], s[1])
+
+    # If using Matplotlib < 3, we should ignore the following warning since
+    # this is beyond our control
+    try:
+        import matplotlib
+    except ImportError:
+        pass
+    else:
+        if LooseVersion(matplotlib.__version__) < '3':
+            warnings.filterwarnings('ignore', category=DeprecationWarning,
+                                    module='numpy.lib.type_check')
+
+
+# TODO: Plan a roadmap of deprecation as pytest.warns has matured over the years.
+# See https://github.com/astropy/astropy/issues/6761
+class catch_warnings(warnings.catch_warnings):
+    """
+    A high-powered version of warnings.catch_warnings to use for testing
+    and to make sure that there is no dependence on the order in which
+    the tests are run.
+
+    This completely blitzes any memory of any warnings that have
+    appeared before so that all warnings will be caught and displayed.
+
+    ``*args`` is a set of warning classes to collect.  If no arguments are
+    provided, all warnings are collected.
+
+    Use as follows::
+
+        with catch_warnings(MyCustomWarning) as w:
+            do.something.bad()
+        assert len(w) > 0
+
+    .. note:: Usage of :ref:`pytest.warns <pytest:warns>` is preferred.
+
+    """
+
+    def __init__(self, *classes):
+        super().__init__(record=True)
+        self.classes = classes
+
+    def __enter__(self):
+        warning_list = super().__enter__()
+        treat_deprecations_as_exceptions()
+        if len(self.classes) == 0:
+            warnings.simplefilter('always')
+        else:
+            warnings.simplefilter('ignore')
+            for cls in self.classes:
+                warnings.simplefilter('always', cls)
+        return warning_list
+
+    def __exit__(self, type, value, traceback):
+        treat_deprecations_as_exceptions()
+
+
+class ignore_warnings(catch_warnings):
+    """
+    This can be used either as a context manager or function decorator to
+    ignore all warnings that occur within a function or block of code.
+
+    An optional category option can be supplied to only ignore warnings of a
+    certain category or categories (if a list is provided).
+    """
+
+    def __init__(self, category=None):
+        super().__init__()
+
+        if isinstance(category, type) and issubclass(category, Warning):
+            self.category = [category]
+        else:
+            self.category = category
+
+    def __call__(self, func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # Originally this just reused self, but that doesn't work if the
+            # function is called more than once so we need to make a new
+            # context manager instance for each call
+            with self.__class__(category=self.category):
+                return func(*args, **kwargs)
+
+        return wrapper
+
+    def __enter__(self):
+        retval = super().__enter__()
+        if self.category is not None:
+            for category in self.category:
+                warnings.simplefilter('ignore', category)
+        else:
+            warnings.simplefilter('ignore')
+        return retval
+
+
+def assert_follows_unicode_guidelines(
+        x, roundtrip=None):
+    """
+    Test that an object follows our Unicode policy.  See
+    "Unicode guidelines" in the coding guidelines.
+
+    Parameters
+    ----------
+    x : object
+        The instance to test
+
+    roundtrip : module, optional
+        When provided, this namespace will be used to evaluate
+        ``repr(x)`` and ensure that it roundtrips.  It will also
+        ensure that ``__bytes__(x)`` roundtrip.
+        If not provided, no roundtrip testing will be performed.
+    """
+    from astropy import conf
+
+    with conf.set_temp('unicode_output', False):
+        bytes_x = bytes(x)
+        unicode_x = str(x)
+        repr_x = repr(x)
+
+        assert isinstance(bytes_x, bytes)
+        bytes_x.decode('ascii')
+        assert isinstance(unicode_x, str)
+        unicode_x.encode('ascii')
+        assert isinstance(repr_x, str)
+        if isinstance(repr_x, bytes):
+            repr_x.decode('ascii')
+        else:
+            repr_x.encode('ascii')
+
+        if roundtrip is not None:
+            assert x.__class__(bytes_x) == x
+            assert x.__class__(unicode_x) == x
+            assert eval(repr_x, roundtrip) == x
+
+    with conf.set_temp('unicode_output', True):
+        bytes_x = bytes(x)
+        unicode_x = str(x)
+        repr_x = repr(x)
+
+        assert isinstance(bytes_x, bytes)
+        bytes_x.decode('ascii')
+        assert isinstance(unicode_x, str)
+        assert isinstance(repr_x, str)
+        if isinstance(repr_x, bytes):
+            repr_x.decode('ascii')
+        else:
+            repr_x.encode('ascii')
+
+        if roundtrip is not None:
+            assert x.__class__(bytes_x) == x
+            assert x.__class__(unicode_x) == x
+            assert eval(repr_x, roundtrip) == x
+
+
+@pytest.fixture(params=[0, 1, -1])
+def pickle_protocol(request):
+    """
+    Fixture to run all the tests for protocols 0 and 1, and -1 (most advanced).
+    (Originally from astropy.table.tests.test_pickle)
+    """
+    return request.param
+
+
+def generic_recursive_equality_test(a, b, class_history):
+    """
+    Check if the attributes of a and b are equal. Then,
+    check if the attributes of the attributes are equal.
+    """
+    dict_a = a.__dict__
+    dict_b = b.__dict__
+    for key in dict_a:
+        assert key in dict_b,\
+          f"Did not pickle {key}"
+        if hasattr(dict_a[key], '__eq__'):
+            eq = (dict_a[key] == dict_b[key])
+            if '__iter__' in dir(eq):
+                eq = (False not in eq)
+            assert eq, f"Value of {key} changed by pickling"
+
+        if hasattr(dict_a[key], '__dict__'):
+            if dict_a[key].__class__ in class_history:
+                # attempt to prevent infinite recursion
+                pass
+            else:
+                new_class_history = [dict_a[key].__class__]
+                new_class_history.extend(class_history)
+                generic_recursive_equality_test(dict_a[key],
+                                                dict_b[key],
+                                                new_class_history)
+
+
+def check_pickling_recovery(original, protocol):
+    """
+    Try to pickle an object. If successful, make sure
+    the object's attributes survived pickling and unpickling.
+    """
+    f = pickle.dumps(original, protocol=protocol)
+    unpickled = pickle.loads(f)
+    class_history = [original.__class__]
+    generic_recursive_equality_test(original, unpickled,
+                                    class_history)
+
+
+def assert_quantity_allclose(actual, desired, rtol=1.e-7, atol=None,
+                             **kwargs):
+    """
+    Raise an assertion if two objects are not equal up to desired tolerance.
+
+    This is a :class:`~astropy.units.Quantity`-aware version of
+    :func:`numpy.testing.assert_allclose`.
+    """
+    import numpy as np
+    from astropy.units.quantity import _unquantify_allclose_arguments
+    np.testing.assert_allclose(*_unquantify_allclose_arguments(
+        actual, desired, rtol, atol), **kwargs)

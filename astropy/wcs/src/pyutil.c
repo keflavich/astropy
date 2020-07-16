@@ -6,9 +6,12 @@
 #define NO_IMPORT_ARRAY
 
 /* util.h must be imported first */
-#include "pyutil.h"
+#include "astropy_wcs/pyutil.h"
+
+#include "astropy_wcs/docstrings.h"
 
 #include "wcsfix.h"
+#include "wcshdr.h"
 #include "wcsprintf.h"
 #include "wcsunits.h"
 
@@ -35,14 +38,14 @@ _PyArrayProxy_New(
       nd, (npy_intp*)dims,
       NULL,
       (void*)data,
-      NPY_C_CONTIGUOUS | flags,
+      NPY_ARRAY_C_CONTIGUOUS | flags,
       NULL);
 
   if (result == NULL) {
     return NULL;
   }
   Py_INCREF(self);
-  PyArray_BASE(result) = (PyObject*)self;
+  PyArray_SetBaseObject((PyArrayObject *)result, self);
   return result;
 }
 
@@ -54,7 +57,7 @@ PyArrayProxy_New(
     int typenum,
     const void* data) {
 
-  return _PyArrayProxy_New(self, nd, dims, typenum, data, NPY_WRITEABLE);
+  return _PyArrayProxy_New(self, nd, dims, typenum, data, NPY_ARRAY_WRITEABLE);
 }
 
 /*@null@*/ PyObject*
@@ -159,7 +162,7 @@ wcsprm_fix_values(
 
   unsigned int naxis = (unsigned int)x->naxis;
 
-  value_fixer(x->cd, 4);
+  value_fixer(x->cd, naxis * naxis);
   value_fixer(x->cdelt, naxis);
   value_fixer(x->crder, naxis);
   value_fixer(x->crota, naxis);
@@ -171,7 +174,7 @@ wcsprm_fix_values(
   value_fixer(&x->lonpole, 1);
   value_fixer(&x->mjdavg, 1);
   value_fixer(&x->mjdobs, 1);
-  value_fixer(x->obsgeo, 3);
+  value_fixer(x->obsgeo, 6);
   value_fixer(&x->cel.phi0, 1);
   value_fixer(&x->restfrq, 1);
   value_fixer(&x->restwav, 1);
@@ -179,6 +182,22 @@ wcsprm_fix_values(
   value_fixer(&x->velangl, 1);
   value_fixer(&x->velosys, 1);
   value_fixer(&x->zsource, 1);
+  value_fixer(x->czphs, naxis);
+  value_fixer(x->cperi, naxis);
+  value_fixer(x->mjdref, 2);
+  value_fixer(&x->mjdbeg, 1);
+  value_fixer(&x->mjdend, 1);
+  value_fixer(&x->jepoch, 1);
+  value_fixer(&x->bepoch, 1);
+  value_fixer(&x->tstart, 1);
+  value_fixer(&x->tstop, 1);
+  value_fixer(&x->xposure, 1);
+  value_fixer(&x->timsyer, 1);
+  value_fixer(&x->timrder, 1);
+  value_fixer(&x->timedel, 1);
+  value_fixer(&x->timepixr, 1);
+  value_fixer(&x->timeoffs, 1);
+  value_fixer(&x->telapse, 1);
 }
 
 void
@@ -203,6 +222,7 @@ wcsprm_python2c(
  * Exceptions                                                              *
  ***************************************************************************/
 
+PyObject* WcsExc_Wcs;
 PyObject* WcsExc_SingularMatrix;
 PyObject* WcsExc_InconsistentAxisTypes;
 PyObject* WcsExc_InvalidTransform;
@@ -219,8 +239,17 @@ PyObject* WcsExc_InvalidTabularParameters;
  */
 PyObject** wcs_errexc[14];
 
+static PyObject*
+_new_exception_with_doc(char *name, char *doc, PyObject *base)
+{
+  return PyErr_NewExceptionWithDoc(name, doc, base, NULL);
+}
+
 #define DEFINE_EXCEPTION(exc) \
-  WcsExc_##exc = PyErr_NewException("astropy.wcs._wcs." #exc "Error", PyExc_ValueError, NULL); \
+  WcsExc_##exc = _new_exception_with_doc(                             \
+      "astropy.wcs._wcs." #exc "Error",                                 \
+      doc_##exc,                                                        \
+      WcsExc_Wcs);                                                      \
   if (WcsExc_##exc == NULL) \
     return 1; \
   PyModule_AddObject(m, #exc "Error", WcsExc_##exc); \
@@ -228,6 +257,15 @@ PyObject** wcs_errexc[14];
 int
 _define_exceptions(
     PyObject* m) {
+
+  WcsExc_Wcs = _new_exception_with_doc(
+      "astropy.wcs._wcs.WcsError",
+      doc_WcsError,
+      PyExc_ValueError);
+  if (WcsExc_Wcs == NULL) {
+    return 1;
+  }
+  PyModule_AddObject(m, "WcsError", WcsExc_Wcs);
 
   DEFINE_EXCEPTION(SingularMatrix);
   DEFINE_EXCEPTION(InconsistentAxisTypes);
@@ -302,28 +340,20 @@ wcserr_fix_to_python_exc(const struct wcserr *err) {
 }
 
 void
-wcserr_units_to_python_exc(const struct wcserr *err) {
-  PyObject *exc;
-  if (err == NULL) {
-    PyErr_SetString(PyExc_RuntimeError, "NULL error object in wcslib");
+wcshdr_err_to_python_exc(int status) {
+  if (status > 0 && status != WCSHDRERR_PARSER) {
+    PyErr_SetString(PyExc_MemoryError, "Memory allocation error");
   } else {
-    if (err->status > 0 && err->status <= UNITSERR_UNSAFE_TRANS) {
-      exc = PyExc_ValueError;
-    } else {
-      exc = PyExc_RuntimeError;
-    }
-    /* This is technically not thread-safe -- make sure we have the GIL */
-    wcsprintf_set(NULL);
-    wcserr_prt(err, "");
-    PyErr_SetString(exc, wcsprintf_buf());
+    PyErr_SetString(PyExc_ValueError, "Internal error in wcslib header parser");
   }
 }
+
 
 /***************************************************************************
   Property helpers
  ***************************************************************************/
 
-#define SHAPE_STR_LEN 128
+#define SHAPE_STR_LEN 2048
 
 /* Helper function to display the desired shape of an array as a
    string, eg. 2x2 */
@@ -436,16 +466,13 @@ set_int(
     return -1;
   }
 
-  #if PY3K
   value_int = PyLong_AsLong(value);
-  #else
-  value_int = PyInt_AsLong(value);
-  #endif
   if (value_int == -1 && PyErr_Occurred()) {
     return -1;
   }
 
   if ((unsigned long)value_int > 0x7fffffff) {
+    PyErr_SetString(PyExc_OverflowError, "integer value too large");
     return -1;
   }
 
@@ -493,7 +520,7 @@ set_double_array(
     return -1;
   }
 
-  value_array = (PyArrayObject*)PyArray_ContiguousFromAny(value, PyArray_DOUBLE,
+  value_array = (PyArrayObject*)PyArray_ContiguousFromAny(value, NPY_DOUBLE,
                                                           ndims, ndims);
   if (value_array == NULL) {
     return -1;
@@ -535,7 +562,7 @@ set_int_array(
     return -1;
   }
 
-  value_array = (PyArrayObject*)PyArray_ContiguousFromAny(value, PyArray_INT,
+  value_array = (PyArrayObject*)PyArray_ContiguousFromAny(value, NPY_INT,
                                                           ndims, ndims);
   if (value_array == NULL) {
     return -1;
@@ -623,7 +650,7 @@ set_str_list(
     input_len = PySequence_Size(str);
     if (input_len > maxlen) {
       PyErr_Format(
-          PyExc_TypeError,
+          PyExc_ValueError,
           "Each entry in '%s' must be less than %u characters",
           propname, (unsigned int)maxlen);
       Py_DECREF(str);
@@ -675,12 +702,16 @@ get_pscards(
   Py_ssize_t i         = 0;
 
   if (nps < 0) {
-    PyErr_SetString(PyExc_ValueError, "Object has no pscards");
-    return NULL;
+    nps = 0;
   }
 
   result = PyList_New((Py_ssize_t)nps);
   if (result == NULL) {
+    return NULL;
+  }
+
+  if (nps && ps == NULL) {
+    PyErr_SetString(PyExc_MemoryError, "NULL pointer");
     return NULL;
   }
 
@@ -782,12 +813,16 @@ get_pvcards(
   Py_ssize_t i         = 0;
 
   if (npv < 0) {
-    PyErr_SetString(PyExc_ValueError, "Object has no pvcards");
-    return NULL;
+    npv = 0;
   }
 
   result = PyList_New((Py_ssize_t)npv);
   if (result == NULL) {
+    return NULL;
+  }
+
+  if (npv && pv == NULL) {
+    PyErr_SetString(PyExc_MemoryError, "NULL pointer");
     return NULL;
   }
 
@@ -816,65 +851,50 @@ set_pvcards(
     int *npv,
     int *npvmax) {
 
-  PyObject*  subvalue  = NULL;
-  int        i         = 0;
-  Py_ssize_t size      = 0;
-  int        ival      = 0;
-  int        mval      = 0;
-  double     dblvalue  = 0.0;
-  void*      newmem    = NULL;
+  PyObject* fastseq = NULL;
+  struct pvcard* newmem = NULL;
+  Py_ssize_t size;
+  int ret = -1;
+  int i;
 
-  if (!PySequence_Check(value)) {
+  fastseq = PySequence_Fast(value, "Expected sequence type");
+  if (!fastseq)
+    goto done;
+
+  size = PySequence_Fast_GET_SIZE(value);
+  newmem = malloc(sizeof(struct pvcard) * size);
+
+  /* Raise exception if size is nonzero but newmem
+   * could not be allocated. */
+  if (size && !newmem) {
+    PyErr_SetString(PyExc_MemoryError, "Could not allocate memory.");
     return -1;
   }
-  size = PySequence_Size(value);
-  if (size > 0x7fffffff) {
-    return -1;
-  }
 
-  if (size > (Py_ssize_t)*npvmax) {
-    newmem = malloc(sizeof(struct pvcard) * size);
-    if (newmem == NULL) {
-      PyErr_SetString(PyExc_MemoryError, "Could not allocate memory.");
-      return -1;
+  for (i = 0; i < size; ++i)
+  {
+    if (!PyArg_ParseTuple(PySequence_Fast_GET_ITEM(value, i), "iid",
+        &newmem[i].i, &newmem[i].m, &newmem[i].value))
+    {
+      goto done;
     }
+  }
+
+  if (size <= (Py_ssize_t)*npvmax) {
+    memcpy(*pv, newmem, sizeof(struct pvcard) * size);
+  } else { /* (size > (Py_ssize_t)*npvmax) */
     free(*pv);
+    *npv = (int)size;
     *pv = newmem;
-    *npvmax = (int)size;
+    newmem = NULL;
   }
+  *npv = (int)size;
 
-  /* Verify the entire list for correct types first, so we don't have
-     to undo anything copied into the canonical array. */
-  for (i = 0; i < size; ++i) {
-    subvalue = PySequence_GetItem(value, i);
-    if (subvalue == NULL) {
-      return -1;
-    }
-    if (!PyArg_ParseTuple(subvalue, "iid", &ival, &mval, &dblvalue)) {
-      Py_DECREF(subvalue);
-      return -1;
-    }
-    Py_DECREF(subvalue);
-  }
-
-  for (i = 0; i < size; ++i) {
-    subvalue = PySequence_GetItem(value, i);
-    if (subvalue == NULL) {
-      return -1;
-    }
-    if (!PyArg_ParseTuple(subvalue, "iid", &ival, &mval, &dblvalue)) {
-      Py_DECREF(subvalue);
-      return -1;
-    }
-    Py_DECREF(subvalue);
-
-    (*pv)[i].i = ival;
-    (*pv)[i].m = mval;
-    (*pv)[i].value = dblvalue;
-    (*npv) = i + 1;
-  }
-
-  return 0;
+  ret = 0;
+done:
+  Py_XDECREF(fastseq);
+  free(newmem);
+  return ret;
 }
 
 PyObject*
@@ -901,7 +921,6 @@ parse_unsafe_unit_conversion_spec(
 
   *ctrl = 0;
 
-  p = arg;
   for (p = arg; *p != '\0'; ++p) {
     switch (*p) {
     case 's':

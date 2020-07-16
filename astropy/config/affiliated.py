@@ -3,6 +3,5 @@
 affiliated packages and installing them.
 """
 
-from __future__ import division
 
 __all__ = []

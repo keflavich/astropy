@@ -3,25 +3,22 @@
 Various utilities and cookbook-like things.
 """
 
-from __future__ import division, with_statement, absolute_import
 
 # STDLIB
+import codecs
 import contextlib
-from distutils import version
 import io
 import re
-import sys
+import gzip
+
+from distutils import version
 
 
 __all__ = [
     'convert_to_writable_filelike',
     'stc_reference_frames',
     'coerce_range_list_param',
-    'is_callable'
     ]
-
-
-IS_PY3K = sys.hexversion >= 0x03000000
 
 
 @contextlib.contextmanager
@@ -37,8 +34,8 @@ def convert_to_writable_filelike(fd, compressed=False):
             - a file path, in which case it is opened, and the file
               object is returned.
 
-            - an object with a :meth:`write` method, in which case that
-              object.
+            - an object with a :meth:``write`` method, in which case that
+              object is returned.
 
     compressed : bool, optional
         If `True`, create a gzip-compressed file.  (Default is `False`).
@@ -47,9 +44,8 @@ def convert_to_writable_filelike(fd, compressed=False):
     -------
     fd : writable file-like object
     """
-    if isinstance(fd, basestring):
+    if isinstance(fd, str):
         if fd.endswith('.gz') or compressed:
-            from ...utils.compat import gzip
             with gzip.GzipFile(fd, 'wb') as real_fd:
                 encoded_fd = io.TextIOWrapper(real_fd, encoding='utf8')
                 yield encoded_fd
@@ -57,21 +53,20 @@ def convert_to_writable_filelike(fd, compressed=False):
                 real_fd.flush()
                 return
         else:
-            with io.open(fd, 'wt', encoding='utf8') as real_fd:
+            with open(fd, 'wt', encoding='utf8') as real_fd:
                 yield real_fd
                 return
     elif hasattr(fd, 'write'):
-        assert is_callable(fd.write)
+        assert callable(fd.write)
 
         if compressed:
-            from ...utils.compat import gzip
             fd = gzip.GzipFile(fileobj=fd)
 
         # If we can't write Unicode strings, use a codecs.StreamWriter
         # object
         needs_wrapper = False
         try:
-            fd.write(u'')
+            fd.write('')
         except TypeError:
             needs_wrapper = True
 
@@ -79,7 +74,6 @@ def convert_to_writable_filelike(fd, compressed=False):
             needs_wrapper = True
 
         if needs_wrapper:
-            import codecs
             yield codecs.getwriter('utf-8')(fd)
             fd.flush()
         else:
@@ -91,7 +85,7 @@ def convert_to_writable_filelike(fd, compressed=False):
         raise TypeError("Can not be coerced to writable file-like object")
 
 
-# <http://www.ivoa.net/Documents/REC/DM/STC-20071030.html>
+# <http://www.ivoa.net/documents/REC/DM/STC-20071030.html>
 stc_reference_frames = set([
     'FK4', 'FK5', 'ECLIPTIC', 'ICRS', 'GALACTIC', 'GALACTIC_I', 'GALACTIC_II',
     'SUPER_GALACTIC', 'AZ_EL', 'BODY', 'GEO_C', 'GEO_D', 'MAG', 'GSE', 'GSM',
@@ -108,7 +102,7 @@ def coerce_range_list_param(p, frames=None, numeric=True):
 
     As defined in `Section 8.7.2 of Simple
     Spectral Access Protocol
-    <http://www.ivoa.net/Documents/REC/DAL/SSA-20080201.html>`_.
+    <http://www.ivoa.net/documents/REC/DAL/SSA-20080201.html>`_.
 
     Parameters
     ----------
@@ -129,7 +123,7 @@ def coerce_range_list_param(p, frames=None, numeric=True):
 
     frames : sequence of str, optional
         A sequence of acceptable frame of reference keywords.  If not
-        provided, the default set in `set_reference_frames` will be
+        provided, the default set in ``set_reference_frames`` will be
         used.
 
     numeric : bool, optional
@@ -153,12 +147,12 @@ def coerce_range_list_param(p, frames=None, numeric=True):
 
     def numeric_or_range(x):
         if isinstance(x, tuple) and len(x) == 2:
-            return '%s/%s' % (str_or_none(x[0]), str_or_none(x[1]))
+            return '{}/{}'.format(str_or_none(x[0]), str_or_none(x[1]))
         else:
             return str_or_none(x)
 
     def is_frame_of_reference(x):
-        return isinstance(x, basestring)
+        return isinstance(x, str)
 
     if p is None:
         return None, 0
@@ -175,13 +169,13 @@ def coerce_range_list_param(p, frames=None, numeric=True):
         if has_frame_of_reference:
             if frames is not None and p[-1] not in frames:
                 raise ValueError(
-                    "'%s' is not a valid frame of reference" % p[-1])
+                    "'{}' is not a valid frame of reference".format(p[-1]))
             out += ';' + p[-1]
             length += 1
 
         return out, length
 
-    elif isinstance(p, basestring):
+    elif isinstance(p, str):
         number = r'([-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?)?'
         if not numeric:
             number = r'(' + number + ')|([A-Z_]+)'
@@ -191,19 +185,19 @@ def coerce_range_list_param(p, frames=None, numeric=True):
             p)
 
         if match is None:
-            raise ValueError("'%s' is not a valid range list" % p)
+            raise ValueError(f"'{p}' is not a valid range list")
 
         frame = match.groupdict()['frame']
         if frames is not None and frame is not None and frame not in frames:
             raise ValueError(
-                "'%s' is not a valid frame of reference" % frame)
+                f"'{frame}' is not a valid frame of reference")
         return p, p.count(',') + p.count(';') + 1
 
     try:
         float(p)
         return str(p), 1
     except TypeError:
-        raise ValueError("'%s' is not a valid range list" % p)
+        raise ValueError(f"'{p}' is not a valid range list")
 
 
 def version_compare(a, b):
@@ -218,19 +212,3 @@ def version_compare(a, b):
     bv = version_to_tuple(b)
     # Can't use cmp because it was removed from Python 3.x
     return (av > bv) - (av < bv)
-
-
-if IS_PY3K:  # pragma: py3
-    import collections
-
-    def is_callable(o):
-        """
-        Returns `True` if `o` is callable.
-        """
-        return isinstance(o, collections.Callable)
-else:  # pragma: py2
-    def is_callable(o):
-        """
-        Returns `True` if `o` is callable.
-        """
-        return callable(o)

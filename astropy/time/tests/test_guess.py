@@ -1,16 +1,18 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-from ...tests.helper import pytest
-from .. import Time
+
+import pytest
+
+from astropy.time import Time
 
 
-class TestGuess():
+class TestGuess:
     """Test guessing the input value format"""
 
     def test_guess1(self):
         times = ['1999-01-01 00:00:00.123456789', '2010-01-01 00:00:00']
         t = Time(times, scale='utc')
         assert (repr(t) == "<Time object: scale='utc' format='iso' "
-                "vals=['1999-01-01 00:00:00.123' '2010-01-01 00:00:00.000']>")
+                "value=['1999-01-01 00:00:00.123' '2010-01-01 00:00:00.000']>")
 
     def test_guess2(self):
         times = ['1999-01-01 00:00:00.123456789', '2010-01 00:00:00']
@@ -21,7 +23,7 @@ class TestGuess():
         times = ['1999:001:00:00:00.123456789', '2010:001']
         t = Time(times, scale='utc')
         assert (repr(t) == "<Time object: scale='utc' format='yday' "
-                "vals=['1999:001:00:00:00.123' '2010:001:00:00:00.000']>")
+                "value=['1999:001:00:00:00.123' '2010:001:00:00:00.000']>")
 
     def test_guess4(self):
         times = [10, 20]

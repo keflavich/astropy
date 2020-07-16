@@ -1,40 +1,135 @@
 """
-Utilities for numpy structured arrays.
+High-level operations for numpy structured arrays.
 
-join():  Perform a database join of two numpy ndarrays.
-
-Some code and inspriration taken from numpy.lib.recfunctions.join_by().
+Some code and inspiration taken from numpy.lib.recfunctions.join_by().
 Redistribution license restrictions apply.
 """
 
 import collections
+from collections import OrderedDict, Counter
+from collections.abc import Sequence
 
 import numpy as np
-import numpy.ma as ma
 
-from . import _np_utils
+__all__ = ['TableMergeError']
 
 
 class TableMergeError(ValueError):
     pass
 
 
-def _counter(iterable):
+def get_col_name_map(arrays, common_names, uniq_col_name='{col_name}_{table_name}',
+                     table_names=None):
     """
-    Count instances of each unique value in ``iterable``.  Returns a dict
-    with the counts.  Would use collections.Counter but this isn't available in 2.6.
+    Find the column names mapping when merging the list of structured ndarrays
+    ``arrays``.  It is assumed that col names in ``common_names`` are to be
+    merged into a single column while the rest will be uniquely represented
+    in the output.  The args ``uniq_col_name`` and ``table_names`` specify
+    how to rename columns in case of conflicts.
+
+    Returns a dict mapping each output column name to the input(s).  This takes the form
+    {outname : (col_name_0, col_name_1, ...), ... }.  For key columns all of input names
+    will be present, while for the other non-key columns the value will be (col_name_0,
+    None, ..) or (None, col_name_1, ..) etc.
     """
-    counts = collections.defaultdict(int)
-    for val in iterable:
-        counts[val] += 1
-    return counts
+
+    col_name_map = collections.defaultdict(lambda: [None] * len(arrays))
+    col_name_list = []
+
+    if table_names is None:
+        table_names = [str(ii + 1) for ii in range(len(arrays))]
+
+    for idx, array in enumerate(arrays):
+        table_name = table_names[idx]
+        for name in array.dtype.names:
+            out_name = name
+
+            if name in common_names:
+                # If name is in the list of common_names then insert into
+                # the column name list, but just once.
+                if name not in col_name_list:
+                    col_name_list.append(name)
+            else:
+                # If name is not one of the common column outputs, and it collides
+                # with the names in one of the other arrays, then rename
+                others = list(arrays)
+                others.pop(idx)
+                if any(name in other.dtype.names for other in others):
+                    out_name = uniq_col_name.format(table_name=table_name, col_name=name)
+                col_name_list.append(out_name)
+
+            col_name_map[out_name][idx] = name
+
+    # Check for duplicate output column names
+    col_name_count = Counter(col_name_list)
+    repeated_names = [name for name, count in col_name_count.items() if count > 1]
+    if repeated_names:
+        raise TableMergeError('Merging column names resulted in duplicates: {}.  '
+                              'Change uniq_col_name or table_names args to fix this.'
+                              .format(repeated_names))
+
+    # Convert col_name_map to a regular dict with tuple (immutable) values
+    col_name_map = OrderedDict((name, col_name_map[name]) for name in col_name_list)
+
+    return col_name_map
 
 
-def common_dtype(arrays, name):
+def get_descrs(arrays, col_name_map):
     """
-    Use numpy to find the common dtype for two structured ndarray columns.
+    Find the dtypes descrs resulting from merging the list of arrays' dtypes,
+    using the column name mapping ``col_name_map``.
+
+    Return a list of descrs for the output.
     """
-    arrs = [np.empty(1, dtype=array[name].dtype) for array in arrays]
+
+    out_descrs = []
+
+    for out_name, in_names in col_name_map.items():
+        # List of input arrays that contribute to this output column
+        in_cols = [arr[name] for arr, name in zip(arrays, in_names) if name is not None]
+
+        # List of names of the columns that contribute to this output column.
+        names = [name for name in in_names if name is not None]
+
+        # Output dtype is the superset of all dtypes in in_arrays
+        try:
+            dtype = common_dtype(in_cols)
+        except TableMergeError as tme:
+            # Beautify the error message when we are trying to merge columns with incompatible
+            # types by including the name of the columns that originated the error.
+            raise TableMergeError("The '{}' columns have incompatible types: {}"
+                                  .format(names[0], tme._incompat_types))
+
+        # Make sure all input shapes are the same
+        uniq_shapes = set(col.shape[1:] for col in in_cols)
+        if len(uniq_shapes) != 1:
+            raise TableMergeError(f'Key columns have different shape')
+        shape = uniq_shapes.pop()
+
+        out_descrs.append((fix_column_name(out_name), dtype, shape))
+
+    return out_descrs
+
+
+def common_dtype(cols):
+    """
+    Use numpy to find the common dtype for a list of structured ndarray columns.
+
+    Only allow columns within the following fundamental numpy data types:
+    np.bool_, np.object_, np.number, np.character, np.void
+    """
+    np_types = (np.bool_, np.object_, np.number, np.character, np.void)
+    uniq_types = set(tuple(issubclass(col.dtype.type, np_type) for np_type in np_types)
+                     for col in cols)
+    if len(uniq_types) > 1:
+        # Embed into the exception the actual list of incompatible types.
+        incompat_types = [col.dtype.name for col in cols]
+        tme = TableMergeError('Columns have incompatible types {}'
+                              .format(incompat_types))
+        tme._incompat_types = incompat_types
+        raise tme
+
+    arrs = [np.empty(1, dtype=col.dtype) for col in cols]
 
     # For string-type arrays need to explicitly fill in non-zero
     # values or the final arr_common = .. step is unpredictable.
@@ -46,194 +141,29 @@ def common_dtype(arrays, name):
     return arr_common.dtype.str
 
 
-def get_merge_descrs(arrays, keys, uniq_col_name='{col_name}_{table_name}',
-                     table_names=None):
+def _check_for_sequence_of_structured_arrays(arrays):
+    err = '`arrays` arg must be a sequence (e.g. list) of structured arrays'
+    if not isinstance(arrays, Sequence):
+        raise TypeError(err)
+    for array in arrays:
+        # Must be structured array
+        if not isinstance(array, np.ndarray) or array.dtype.names is None:
+            raise TypeError(err)
+    if len(arrays) == 0:
+        raise ValueError('`arrays` arg must include at least one array')
+
+
+def fix_column_name(val):
     """
-    Find the dtypes descrs resulting from merging the list of arrays' dtypes,
-    assuming the names in `keys` are common in the output.
-
-    Return a list of descrs for the output and a dict mapping
-    each output column name to the input(s).  This takes the form
-    { outname : (col_name_0, col_name_1, ...), ... }.
-    For key columns all of input names will be
-    present, while for the other non-key columns the value will
-    be (col_name_0, None, ..) or (None, col_name_1, ..) etc.
+    Fixes column names so that they are compatible with Numpy on
+    Python 2.  Raises a ValueError exception if the column name
+    contains Unicode characters, which can not reasonably be used as a
+    column name.
     """
+    if val is not None:
+        try:
+            val = str(val)
+        except UnicodeEncodeError:
+            raise
 
-    out_descrs = []
-    col_name_map = collections.defaultdict(lambda: list([None, None]))
-
-    if table_names is None:
-        table_names = [str(ii + 1) for ii in range(len(arrays))]
-
-    # TODO: should probably refactor this into one routine that determines
-    # col_name_map and a second that gets the merged descrs.
-
-    for idx, array in enumerate(arrays):
-        table_name = table_names[idx]
-        for descr in array.dtype.descr:
-            name = descr[0]
-            shape = array[name].shape[1:]
-            out_descr = [name, descr[1], shape]
-
-            if name in keys:
-                out_name = name  # note: in future there may be diff keys for left / right
-                if idx != 0:
-                    col_name_map[out_name][1] = name
-                    # Skip over keys for the right array, already was done for the left
-                    continue
-                else:
-                    col_name_map[out_name][0] = name
-
-                uniq_shapes = set(arr[name].shape[1:] for arr in arrays)
-                if len(uniq_shapes) != 1:
-                    raise TableMergeError('Key columns {0!r} have different shape'.format(name))
-
-                out_descr[1] = common_dtype(arrays, name)
-            elif any(name in other.dtype.names for other in arrays if other is not array):
-                out_descr[0] = uniq_col_name.format(table_name=table_name, col_name=name)
-
-            col_name_map[out_descr[0]][idx] = name
-            out_descrs.append(tuple(out_descr))
-
-    # Check for duplicate output column names
-    col_name_count = _counter(descr[0] for descr in out_descrs)
-    repeated_names = [name for name, count in col_name_count.items() if count > 1]
-    if repeated_names:
-        raise TableMergeError('Merging column names resulted in duplicates: {0:s}.  '
-                              'Change uniq_col_name or table_names args to fix this.'
-                              .format(repeated_names))
-
-    # Convert col_name_map to a regular dict with tuple (immutable) values
-    col_name_map = dict((key, tuple(val)) for key, val in col_name_map.items())
-
-    return out_descrs, col_name_map
-
-
-def join(left, right, keys=None, join_type='inner',
-         uniq_col_name='{col_name}_{table_name}',
-         table_names=['1', '2'],
-         col_name_map=None):
-    """
-    Perform a join of the left and right numpy structured array on specified keys.
-
-    Parameters
-    ----------
-    left : structured ndarray
-        Left side table in the join
-    right : structured ndarray
-        Right side table in the join
-    keys : str or list of str
-        Column(s) used to match rows of left and right tables.  Default
-        is to use all columns which are common to both tables.
-    join_type : str
-        Join type ('inner' | 'outer' | 'left' | 'right'), default is 'inner'
-    uniq_col_name : str or None
-        String generate a unique output column name in case of a conflict.
-        The default is '{col_name}_{table_name}'.
-    table_names : list of str or None
-        Two-element list of table names used when generating unique output
-        column names.  The default is ['1', '2'].
-    col_name_map : empty dict or None
-        If passed as a dict then it will be updated in-place with the
-        mapping of output to input column names.
-    """
-
-    # This function improves on np.lib.recfunctions.join_by():
-    #   key values do not have to be unique (ok with cartesion join)
-    #   key columns do not have to be in the same order
-    #   key columns can have non-trivial shape
-
-    if join_type not in ('inner', 'outer', 'left', 'right'):
-        raise ValueError("The 'join_type' argument should be in 'inner', "
-                         "'outer', 'left' or 'right' (got '{0}' instead)".
-                         format(join_type))
-
-    # If we have a single key, put it in a tuple
-    if keys is None:
-        keys = tuple(name for name in left.dtype.names if name in right.dtype.names)
-        if len(keys) == 0:
-            raise TableMergeError('No keys in common between left and right tables')
-    elif isinstance(keys, basestring):
-        keys = (keys,)
-
-    # Check the key columns
-    for arr, arr_label in ((left, 'Left'), (right, 'Right')):
-        for name in keys:
-            if name not in arr.dtype.names:
-                raise TableMergeError('{0} table does not have key column {1!r}'
-                                      .format(arr_label, name))
-            if hasattr(arr[name], 'mask') and np.any(arr[name].mask):
-                raise TableMergeError('{0} key column {1!r} has missing values'
-                                 .format(arr_label, name))
-
-    # Make sure we work with ravelled arrays
-    left = left.ravel()
-    right = right.ravel()
-    len_left, len_right = len(left), len(right)
-    left_names, right_names = left.dtype.names, right.dtype.names
-
-    # Joined array dtype as a list of descr (name, type_str, shape) tuples
-    out_descrs, _col_name_map = get_merge_descrs([left, right], keys, uniq_col_name, table_names)
-    # If col_name_map supplied as a dict input, then update.
-    if isinstance(col_name_map, dict):
-        col_name_map.update(_col_name_map)
-
-    # Make an array with just the key columns
-    out_keys_dtype = [descr for descr in out_descrs if descr[0] in keys]
-    out_keys = np.empty(len_left + len_right, dtype=out_keys_dtype)
-    for key in keys:
-        out_keys[key][:len_left] = left[key]
-        out_keys[key][len_left:] = right[key]
-    idx_sort = out_keys.argsort(order=keys)
-    out_keys = out_keys[idx_sort]
-
-    # Get all keys
-    diffs = np.concatenate(([True], out_keys[1:] != out_keys[:-1], [True]))
-    idxs = np.flatnonzero(diffs)
-
-    # Main inner loop in Cython to compute the cartesion product
-    # indices for the given join type
-    int_join_type = {'inner': 0, 'outer': 1, 'left': 2, 'right': 3}[join_type]
-    masked, n_out, left_out, left_mask, right_out, right_mask = \
-        _np_utils.join_inner(idxs, idx_sort, len_left, int_join_type)
-
-    # If either of the inputs are masked then the output is masked
-    if any(isinstance(array, ma.MaskedArray) for array in (left, right)):
-        masked = True
-
-    if masked:
-        out = ma.empty(n_out, dtype=out_descrs)
-    else:
-        out = np.empty(n_out, dtype=out_descrs)
-
-    # If either input array was zero length then stub a new version
-    # with one row.  In this case the corresponding left_out or right_out
-    # will contain all zeros with mask set to true.  This allows the
-    # take(*_out) method calls to work as expected.
-    if len(left) == 0:
-        left = left.__class__(1, dtype=left.dtype)
-    if len(right) == 0:
-        right = right.__class__(1, dtype=right.dtype)
-
-    for out_name, left_right_names in _col_name_map.items():
-        left_name, right_name = left_right_names
-
-        if left_name and right_name:  # this is a key which comes from left and right
-            out[out_name] = np.where(right_mask,
-                                     left[left_name].take(left_out),
-                                     right[right_name].take(right_out))
-            continue
-        elif left_name:  # out_name came from the left table
-            name, array, array_out, array_mask = left_name, left, left_out, left_mask
-        elif right_name:
-            name, array, array_out, array_mask = right_name, right, right_out, right_mask
-        else:
-            raise TableMergeError('Unexpected column names (maybe one is ""?)')
-        out[out_name] = array[name].take(array_out)
-        if masked:
-            if isinstance(array, ma.MaskedArray):
-                array_mask = array_mask | array[name].mask.take(array_out)
-            out[out_name].mask = array_mask
-
-    return out
+    return val

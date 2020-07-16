@@ -1,19 +1,14 @@
 #-----------------------------------------------------------------------------
 # Process this file with autoconf-2.53 or later to produce a configure script.
 #-----------------------------------------------------------------------------
-# N.B. it is necessary to run autoconf on a Mac in order for configure to
-# locate the X11 dylibs for PGPLOT.  Use autoconf-2.61 in MacOSX 10.6.2 or
-# later to avoid spurious messages about deleting conftest.dSYM when
-# configuring in MacOSX 10.6.
-#
 # Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
 # http://www.atnf.csiro.au/people/Mark.Calabretta
-# $Id: configure.ac,v 4.17 2013/01/29 05:29:22 cal103 Exp $
+# $Id: configure.ac,v 7.3 2020/06/03 03:37:03 mcalabre Exp $
 #-----------------------------------------------------------------------------
 
-AC_INIT([WCSLIB], [4.17], [mark@calabretta.id.au], [wcslib-4.17])
+AC_INIT([WCSLIB], [7.3], [mark@calabretta.id.au], [wcslib-7.3])
 AC_PREREQ([2.53])
-AC_REVISION([$Revision: 4.17 $])
+AC_REVISION([$Revision: 7.3 $])
 AC_SUBST([PACKAGE_VERSION])
 AC_DEFINE_UNQUOTED([WCSLIB_VERSION], [$PACKAGE_VERSION], [Define wcslib version])
 
@@ -25,8 +20,8 @@ AC_CONFIG_SRCDIR([C/wcs.h])
 AC_CONFIG_AUX_DIR([config])
 
 # Get the system type.
-AC_CANONICAL_BUILD
-ARCH="${build_cpu}-$build_os"
+AC_CANONICAL_HOST
+ARCH="${host_cpu}-$host_os"
 AC_SUBST([ARCH])
 
 
@@ -34,7 +29,7 @@ AC_SUBST([ARCH])
 AC_CHECK_PROG([FLEX], [flex], [flex], [], [], [])
 if test "x$FLEX" = xflex ; then
   # Version 2.5.9 or later is required.
-  V=`flex --version | awk '{print $NF}'`
+  V=`flex --version | awk '{print $2}'`
   W=`echo $V | awk -F. '{if ((($1*100 + $2)*100 + $3) < 20509) print "no"}'`
   if test "x$W" != x ; then
     AC_MSG_NOTICE([Flex version $V is too old, ignored.])
@@ -90,6 +85,16 @@ if test "x$ac_cv_header_stdc" = xno; then
     ERROR: WCSLIB configuration failure.
     -------------------------------------------------------------------], [1])
 fi
+
+# Flex uses fileno() and other POSIX features whose prototypes are only
+# available from glibc's stdio.h with an appropriate preprocessor macro
+# definition.  This cannot be set within the flex description file itself
+# as stdio.h is included in the generated C code before any part of the
+# description.  See fileno(3) and feature_test_macros(7).
+if test "x$ac_cv_c_compiler_gnu" = xyes ; then
+  FLFLAGS="$FLFLAGS -D_POSIX_C_SOURCE=1"
+fi
+AC_SUBST([FLFLAGS])
 
 # Checks for ANSI C library functions (suggested by autoscan - fseeko and
 # stat are only required by fitshdr).
@@ -212,6 +217,27 @@ else
     # Fortran object modules such as pgsbox.
     AC_F77_LIBRARY_LDFLAGS
 
+    # Tidy up FLIBS.
+    dirs=
+    libs=
+    for flib in $FLIBS
+    do
+      case "$flib" in
+      -L*)  
+        dir=`echo "$flib" | sed -e 's/-L//'`
+        dir=-L`cd "$dir" && pwd`
+        dirs="$dirs $dir"
+        ;;  
+      *) 
+        libs="$libs $flib"
+        ;;  
+      esac
+    done
+
+    dirs=`for dir in $dirs ; do echo "$dir" ; done | sort -u | xargs`
+
+    FLIBS="$dirs$libs"
+
     # F77 name mangling (defines the F77_FUNC preprocessor macro).
     AC_F77_WRAPPERS
 
@@ -232,47 +258,61 @@ AC_CHECK_LIB([SystemStubs], [printf\$LDBLStub], [LIBS="$LIBS -lSystemStubs"],
 # Library and installation utilities.
 #------------------------------------
 # Static library generation.
+# Ensure "non-deterministic" archives are produced during the build process.
+ar rU conftest.a > /dev/null 2>&1 && ARFLAGS="U"
+rm -f conftest.a
+AC_SUBST([ARFLAGS])
 AC_PROG_RANLIB
 
-# Shared library generation.
+# Shared library generation - gcc only.
+# Ways of disabling shared libraries:
+#   configure --disable-shared
+#   configure --enable-shared=no
+AC_ARG_ENABLE([shared], [AS_HELP_STRING([--disable-shared],
+            [don't build the WCS shared libraries])], [])
+
+SHRLIB=
+SONAME=
+SHRFLAGS=
+SHRLD=
+SHRSFX=
+SHRLN=
+
 if test "x$ac_cv_c_compiler_gnu" = xyes ; then
-  SHVER=`echo "$LIBVER" | sed -e 's/\..*$//'`
+  if test "x$enable_shared" = xno ; then
+    AC_MSG_WARN([Generation of WCS shared libraries disabled])
 
-  # Note that -fPIC is on by default for Macs, this just makes it obvious.
-  SHRFLAGS="-fPIC"
-  SHRLD="\$(CC) \$(SHRFLAGS)"
+  else
+    SHVER=`echo "$LIBVER" | sed -e 's/\..*$//'`
 
-  case "$build_os" in
-  darwin*)
-    SHRLIB="libwcs.$LIBVER.dylib"
-    SONAME="libwcs.$SHVER.dylib"
-    SHRLD="$SHRLD -dynamiclib -single_module"
-    SHRLD="$SHRLD -compatibility_version $SHVER -current_version $LIBVER"
-    SHRLN=
+    # Note that -fPIC is on by default for Macs, this just makes it obvious.
+    SHRFLAGS="-fPIC"
+    SHRLD="\$(CC) \$(SHRFLAGS)"
 
-    case "$build_cpu" in
-    powerpc*)
-      # Switch off -fPIC (not applicable for PowerPC Macs).
-      CFLAGS="$CFLAGS -mdynamic-no-pic"
+    case "$host_os" in
+    darwin*)
+      SHRLIB="libwcs.$LIBVER.dylib"
+      SONAME="libwcs.$SHVER.dylib"
+      SHRLD="$SHRLD -dynamiclib -single_module"
+      SHRLD="$SHRLD -compatibility_version $SHVER -current_version $LIBVER"
+      SHRLN="libwcs.dylib"
+
+      case "$host_cpu" in
+      powerpc*)
+        # Switch off -fPIC (not applicable for PowerPC Macs).
+        CFLAGS="$CFLAGS -mdynamic-no-pic"
+        ;;
+      esac
+      ;;
+    *)
+      # Covers Linux and Solaris at least.
+      SHRLIB="libwcs.so.$LIBVER"
+      SONAME="libwcs.so.$SHVER"
+      SHRLD="$SHRLD -shared -Wl,-h\$(SONAME)"
+      SHRLN="libwcs.so"
       ;;
     esac
-    ;;
-  *)
-    # Covers Linux and Solaris at least.
-    SHRLIB="libwcs.so.$LIBVER"
-    SONAME="libwcs.so.$SHVER"
-    SHRLD="$SHRLD -shared -Wl,-h\$(SONAME)"
-    SHRLN="libwcs.so"
-    ;;
-  esac
-
-else
-  SHRLIB=
-  SONAME=
-  SHRFLAGS=
-  SHRLD=
-  SHRSFX=
-  SHRLN=
+  fi
 fi
 
 AC_SUBST([SHRLIB])
@@ -285,6 +325,11 @@ AC_SUBST([SHRLN])
 # Installation utilities.
 AC_PROG_LN_S
 AC_PROG_INSTALL
+
+# Older versions of GNU make do not have the -O option, which only facilitates
+# legibility of the output from parallel builds (make -j).
+make --help | grep '\-O' >/dev/null 2>&1 && MAKEFLAGS="-Otarget"
+AC_SUBST([MAKEFLAGS])
 
 AC_MSG_NOTICE([End of primary configuration.
 ])
@@ -492,11 +537,11 @@ fi
 #   configure --enable-utils=no
 AC_ARG_ENABLE([utils], [AS_HELP_STRING([--disable-utils],
             [don't build the WCS utilities])], [])
-if test "x$enable_utils" != xno ; then
+if test "x$enable_utils" = xno ; then
+  AC_MSG_WARN([Compilation of WCS utilities disabled])
+else
   SUBDIRS="$SUBDIRS utils"
   INSTDIR="$INSTDIR utils"
-else
-  AC_MSG_WARN([Compilation of WCS utilities disabled])
 fi
 
 
@@ -513,6 +558,8 @@ AC_SUBST([INSTDIR])
 
 AC_MSG_NOTICE([End of auxiliary configuration.
 ])
+
+AC_SUBST([FLAVOUR])
 
 
 # Do it.

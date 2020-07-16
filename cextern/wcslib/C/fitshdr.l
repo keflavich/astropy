@@ -1,7 +1,7 @@
 /*============================================================================
 
-  WCSLIB 4.17 - an implementation of the FITS WCS standard.
-  Copyright (C) 1995-2013, Mark Calabretta
+  WCSLIB 7.3 - an implementation of the FITS WCS standard.
+  Copyright (C) 1995-2020, Mark Calabretta
 
   This file is part of WCSLIB.
 
@@ -22,7 +22,7 @@
 
   Author: Mark Calabretta, Australia Telescope National Facility, CSIRO.
   http://www.atnf.csiro.au/people/Mark.Calabretta
-  $Id: fitshdr.l,v 4.17 2013/01/29 05:29:20 cal103 Exp $
+  $Id: fitshdr.l,v 7.3 2020/06/03 03:37:02 mcalabre Exp $
 *=============================================================================
 *
 * fitshdr.l is a Flex description file containing a lexical scanner
@@ -38,10 +38,12 @@
 /* Options. */
 %option full
 %option never-interactive
+%option noinput
 %option nounput
 %option noyywrap
 %option outfile="fitshdr.c"
 %option prefix="fitshdr"
+%option reentrant
 
 /* Keywords. */
 KEYCHR	[-_A-Z0-9]
@@ -61,7 +63,7 @@ INT32	[+-]?0*[0-9]{1,9}
 INT64	[+-]?0*[0-9]{10,18}
 INTVL	[+-]?0*[0-9]{19,}
 INTEGER	[+-]?[0-9]+
-FLOAT	[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eE][+-]?[0-9]+)?
+FLOAT	[+-]?([0-9]+\.?[0-9]*|\.[0-9]+)([eEdD][+-]?[0-9]+)?
 ICOMPLX	\(" "*{INTEGER}" "*," "*{INTEGER}" "*\)
 FCOMPLX	\(" "*{FLOAT}" "*," "*{FLOAT}" "*\)
 STRING	'([^']|'')*'
@@ -82,9 +84,39 @@ UNITSTR \[[-+*/^(). 0-9a-zA-Z]+\]
 #include "fitshdr.h"
 #include "wcsutil.h"
 
-#define YY_DECL int fitshdr(const char header[], int nkeyrec, int nkeyids, \
-                            struct fitskeyid keyids[], int *nreject, \
-                            struct fitskey **keys)
+static int fitshdr_scanner(const char header[], int nkeyrec, int nkeyids, \
+                           struct fitskeyid keyids[], int *nreject, \
+                           struct fitskey **keys, yyscan_t yyscanner);
+
+/*--------------------------------------------------------------------------*/
+
+int fitshdr(
+  const char header[],
+  int nkeyrec,
+  int nkeyids,
+  struct fitskeyid keyids[],
+  int *nreject,
+  struct fitskey **keys)
+
+{
+  int status;
+  yyscan_t yyscanner;
+  int yylex_init(yyscan_t *yyscanner);
+  int yylex_destroy(yyscan_t yyscanner);
+
+  yylex_init(&yyscanner);
+  status = fitshdr_scanner(header, nkeyrec, nkeyids, keyids, nreject,
+                           keys, yyscanner);
+  yylex_destroy(yyscanner);
+
+  return status;
+}
+
+/*--------------------------------------------------------------------------*/
+
+#define YY_DECL int fitshdr_scanner(const char header[], int nkeyrec, \
+  int nkeyids, struct fitskeyid keyids[], int *nreject, \
+  struct fitskey **keys, yyscan_t yyscanner)
 
 #define YY_INPUT(inbuff, count, bufsize) \
 	{ \
@@ -123,7 +155,6 @@ const char *fitshdr_errmsg[] = {
 	struct fitskey *kptr;
 	struct fitskeyid *iptr;
 	void nullfill(char cptr[], int len);
-	int  yylex_destroy(void);
 	
 	fitshdr_hdr = header;
 	fitshdr_nkeyrec = nkeyrec;
@@ -261,7 +292,7 @@ const char *fitshdr_errmsg[] = {
 
 <VALUE>{INT64} {
 	  /* 64-bit signed integer keyvalue (up to 18 digits). */
-	  if (wcsutil_str2double(yytext, "%lf", &dtmp)) {
+	  if (wcsutil_str2double(yytext, &dtmp)) {
 	    kptr->status |= FITSHDR_KEYVALUE;
 	    BEGIN(ERROR);
 	
@@ -344,7 +375,7 @@ const char *fitshdr_errmsg[] = {
 <VALUE>{FLOAT} {
 	  /* Float keyvalue. */
 	  kptr->type = 5;
-	  if (wcsutil_str2double(yytext, "%lf", &(kptr->keyvalue.f))) {
+	  if (wcsutil_str2double(yytext, &(kptr->keyvalue.f))) {
 	    kptr->status |= FITSHDR_KEYVALUE;
 	    BEGIN(ERROR);
 	  }
@@ -373,7 +404,7 @@ const char *fitshdr_errmsg[] = {
 	  }
 	  *cptr = '\0';
 	
-	  if (wcsutil_str2double(ctmp, "%lf", kptr->keyvalue.c)) {
+	  if (wcsutil_str2double(ctmp, kptr->keyvalue.c)) {
 	    kptr->status |= FITSHDR_KEYVALUE;
 	    BEGIN(ERROR);
 	  }
@@ -383,7 +414,7 @@ const char *fitshdr_errmsg[] = {
 	  }
 	  *cptr = '\0';
 	
-	  if (wcsutil_str2double(ctmp, "%lf", kptr->keyvalue.c+1)) {
+	  if (wcsutil_str2double(ctmp, kptr->keyvalue.c+1)) {
 	    kptr->status |= FITSHDR_KEYVALUE;
 	    BEGIN(ERROR);
 	  }
@@ -538,7 +569,6 @@ const char *fitshdr_errmsg[] = {
 
 <<EOF>>	{
 	  /* End-of-input. */
-	  yylex_destroy();
 	  return 0;
 	}
 

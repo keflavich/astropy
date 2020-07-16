@@ -1,471 +1,327 @@
 # Licensed under a 3-clause BSD style license - see LICENSE.rst
-#This module implements the base NDData class.
+# This module implements the base NDData class.
+
+
+import numpy as np
+from copy import deepcopy
+
+from .nddata_base import NDDataBase
+from .nduncertainty import NDUncertainty, UnknownUncertainty
+from astropy import log
+from astropy.units import Unit, Quantity
+from astropy.utils.metadata import MetaData
+from astropy.wcs.wcsapi import (BaseLowLevelWCS, BaseHighLevelWCS,
+                                SlicedLowLevelWCS, HighLevelWCSWrapper)
 
 __all__ = ['NDData']
 
-import numpy as np
-
-from ..units import Unit
-from .. import log
-
-from .flag_collection import FlagCollection
-from .nduncertainty import IncompatibleUncertaintiesException, NDUncertainty
-from ..utils.compat.odict import OrderedDict
-from  ..io import registry as io_registry
-from ..config import ConfigurationItem
-
-WARN_UNSUPPORTED_CORRELATED = ConfigurationItem(
-    'warn_unsupported_correlated', True,
-    'Whether to issue a warning if NDData arithmetic is performed with '
-    'uncertainties and the uncertainties do not support the propagation '
-    'of correlated uncertainties.'
-    )
+_meta_doc = """`dict`-like : Additional meta information about the dataset."""
 
 
-class NDData(object):
-    """A Superclass for array-based data in Astropy.
+class NDData(NDDataBase):
+    """
+    A container for `numpy.ndarray`-based datasets, using the
+    `~astropy.nddata.NDDataBase` interface.
 
-    The key distinction from raw numpy arrays is the presence of
-    additional metadata such as uncertainties, a mask, units, flags,
-    and/or a coordinate system.
+    The key distinction from raw `numpy.ndarray` is the presence of
+    additional metadata such as uncertainty, mask, unit, a coordinate system
+    and/or a dictionary containing further meta information. This class *only*
+    provides a container for *storing* such datasets. For further functionality
+    take a look at the ``See also`` section.
+
+    See also: http://docs.astropy.org/en/stable/nddata/
 
     Parameters
     -----------
-    data : `~numpy.ndarray` or `~astropy.nddata.NDData`
-        The actual data contained in this `NDData` object. Not that this
-        will always be copies by *reference* , so you should make copy
-        the `data` before passing it in if that's the  desired behavior.
+    data : `numpy.ndarray`-like or `NDData`-like
+        The dataset.
 
-    uncertainty : `~astropy.nddata.NDUncertainty`, optional
-        Uncertainties on the data.
+    uncertainty : any type, optional
+        Uncertainty in the dataset.
+        Should have an attribute ``uncertainty_type`` that defines what kind of
+        uncertainty is stored, for example ``"std"`` for standard deviation or
+        ``"var"`` for variance. A metaclass defining such an interface is
+        `NDUncertainty` - but isn't mandatory. If the uncertainty has no such
+        attribute the uncertainty is stored as `UnknownUncertainty`.
+        Defaults to ``None``.
 
-    mask : `~numpy.ndarray`, optional
-        Mask for the data, given as a boolean Numpy array with a shape
-        matching that of the data. The values must be ``False`` where
-        the data is *valid* and ``True`` when it is not (like Numpy
-        masked arrays). If `data` is a numpy masked array, providing
-        `mask` here will causes the mask from the masked array to be
-        ignored.
+    mask : any type, optional
+        Mask for the dataset. Masks should follow the ``numpy`` convention that
+        **valid** data points are marked by ``False`` and **invalid** ones with
+        ``True``.
+        Defaults to ``None``.
 
-    flags : `~numpy.ndarray` or `~astropy.nddata.FlagCollection`, optional
-        Flags giving information about each pixel. These can be specified
-        either as a Numpy array of any type with a shape matching that of the
-        data, or as a `~astropy.nddata.FlagCollection` instance which has a
-        shape matching that of the data.
-
-    wcs : undefined, optional
-        WCS-object containing the world coordinate system for the data.
-
-        .. warning::
-            This is not yet defind because the discussion of how best to
-            represent this class's WCS system generically is still under
-            consideration. For now just leave it as None
+    wcs : any type, optional
+        World coordinate system (WCS) for the dataset.
+        Default is ``None``.
 
     meta : `dict`-like object, optional
-        Metadata for this object.  "Metadata" here means all information that
-        is included with this object but not part of any other attribute
-        of this particular object.  e.g., creation date, unique identifier,
-        simulation parameters, exposure time, telescope name, etc.
+        Additional meta information about the dataset. If no meta is provided
+        an empty `collections.OrderedDict` is created.
+        Default is ``None``.
 
-    unit : `astropy.units.UnitBase` instance or str, optional
-        The units of the data.
+    unit : `~astropy.units.Unit`-like or str, optional
+        Unit for the dataset. Strings that can be converted to a
+        `~astropy.units.Unit` are allowed.
+        Default is ``None``.
 
+    copy : `bool`, optional
+        Indicates whether to save the arguments as copy. ``True`` copies
+        every attribute before saving it while ``False`` tries to save every
+        parameter as reference.
+        Note however that it is not always possible to save the input as
+        reference.
+        Default is ``False``.
+
+        .. versionadded:: 1.2
 
     Raises
     ------
-    ValueError
-        If the `uncertainty` or `mask` inputs cannot be broadcast (e.g., match
-        shape) onto `data`.
+    TypeError
+        In case ``data`` or ``meta`` don't meet the restrictions.
 
     Notes
     -----
-    `NDData` objects can be easily converted to a regular Numpy array
-    using `numpy.asarray`
-
-    For example::
+    Each attribute can be accessed through the homonymous instance attribute:
+    ``data`` in a `NDData` object can be accessed through the `data`
+    attribute::
 
         >>> from astropy.nddata import NDData
-        >>> import numpy as np
-        >>> x = NDData([1,2,3])
-        >>> np.asarray(x)
+        >>> nd = NDData([1,2,3])
+        >>> nd.data
         array([1, 2, 3])
 
-    If the `NDData` object has a `mask`, `numpy.asarray` will return a
-    Numpy masked array.
+    Given a conflicting implicit and an explicit parameter during
+    initialization, for example the ``data`` is a `~astropy.units.Quantity` and
+    the unit parameter is not ``None``, then the implicit parameter is replaced
+    (without conversion) by the explicit one and a warning is issued::
 
-    This is useful, for example, when plotting a 2D image using
-    matplotlib::
+        >>> import numpy as np
+        >>> import astropy.units as u
+        >>> q = np.array([1,2,3,4]) * u.m
+        >>> nd2 = NDData(q, unit=u.cm)
+        INFO: overwriting Quantity's current unit with specified unit. [astropy.nddata.nddata]
+        >>> nd2.data  # doctest: +FLOAT_CMP
+        array([1., 2., 3., 4.])
+        >>> nd2.unit
+        Unit("cm")
 
-        >>> from astropy.nddata import NDData
-        >>> from matplotlib import pyplot as plt
-        >>> x = NDData([[1,2,3], [4,5,6]])
-        >>> plt.imshow(x)
-
+    See also
+    --------
+    NDDataRef
+    NDDataArray
     """
 
-    def __init__(self, data, uncertainty=None, mask=None, flags=None, wcs=None,
-                 meta=None, unit=None):
+    # Instead of a custom property use the MetaData descriptor also used for
+    # Tables. It will check if the meta is dict-like or raise an exception.
+    meta = MetaData(doc=_meta_doc, copy=False)
 
-        if isinstance(data, self.__class__):
-            self.data = np.array(data.data, subok=True, copy=False)
+    def __init__(self, data, uncertainty=None, mask=None, wcs=None,
+                 meta=None, unit=None, copy=False):
 
-            if uncertainty is not None:
-                self.uncertainty = uncertainty
-                log.info("Overwriting NDData's current uncertainty being overwritten with specified uncertainty")
+        # Rather pointless since the NDDataBase does not implement any setting
+        # but before the NDDataBase did call the uncertainty
+        # setter. But if anyone wants to alter this behavior again the call
+        # to the superclass NDDataBase should be in here.
+        super().__init__()
 
-            if mask is not None:
-                self.mask = mask
-                log.info("Overwriting NDData's current mask being overwritten with specified mask")
+        # Check if data is any type from which to collect some implicitly
+        # passed parameters.
+        if isinstance(data, NDData):  # don't use self.__class__ (issue #4137)
+            # Of course we need to check the data because subclasses with other
+            # init-logic might be passed in here. We could skip these
+            # tests if we compared for self.__class__ but that has other
+            # drawbacks.
 
-            if flags is not None:
-                self.flags = flags
-                log.info("Overwriting NDData's current flags being overwritten with specified flag")
+            # Comparing if there is an explicit and an implicit unit parameter.
+            # If that is the case use the explicit one and issue a warning
+            # that there might be a conflict. In case there is no explicit
+            # unit just overwrite the unit parameter with the NDData.unit
+            # and proceed as if that one was given as parameter. Same for the
+            # other parameters.
+            if (unit is not None and data.unit is not None and
+                    unit != data.unit):
+                log.info("overwriting NDData's current "
+                         "unit with specified unit.")
+            elif data.unit is not None:
+                unit = data.unit
 
-            if wcs is not None:
-                self.wcs = wcs
-                log.info("Overwriting NDData's current wcs being overwritten with specified wcs")
+            if uncertainty is not None and data.uncertainty is not None:
+                log.info("overwriting NDData's current "
+                         "uncertainty with specified uncertainty.")
+            elif data.uncertainty is not None:
+                uncertainty = data.uncertainty
 
-            if meta is not None:
-                self.meta = meta
-                log.info("Overwriting NDData's current meta being overwritten with specified meta")
+            if mask is not None and data.mask is not None:
+                log.info("overwriting NDData's current "
+                         "mask with specified mask.")
+            elif data.mask is not None:
+                mask = data.mask
 
-            if unit is not None:
-                raise ValueError('To convert to different unit please use .to')
+            if wcs is not None and data.wcs is not None:
+                log.info("overwriting NDData's current "
+                         "wcs with specified wcs.")
+            elif data.wcs is not None:
+                wcs = data.wcs
+
+            if meta is not None and data.meta is not None:
+                log.info("overwriting NDData's current "
+                         "meta with specified meta.")
+            elif data.meta is not None:
+                meta = data.meta
+
+            data = data.data
+
         else:
-            if hasattr(data, 'mask'):
-                self.data = np.array(data.data, subok=True, copy=False)
-
+            if hasattr(data, 'mask') and hasattr(data, 'data'):
+                # Separating data and mask
                 if mask is not None:
-                    self.mask = mask
-                    log.info("NDData was created with a masked array, and a "
-                        "mask was explictly provided to NDData. The explicitly "
-                        "passed-in mask will be used and the masked array's "
-                        "mask will be ignored.")
+                    log.info("overwriting Masked Objects's current "
+                             "mask with specified mask.")
                 else:
-                    self.mask = data.mask
-            else:
-                self.data = np.array(data, subok=True, copy=False)
-                self.mask = mask
+                    mask = data.mask
 
-            self.uncertainty = uncertainty
-            self.flags = flags
-            self.wcs = wcs
-            self.meta = meta
-            self.unit = unit
+                # Just save the data for further processing, we could be given
+                # a masked Quantity or something else entirely. Better to check
+                # it first.
+                data = data.data
+
+            if isinstance(data, Quantity):
+                if unit is not None and unit != data.unit:
+                    log.info("overwriting Quantity's current "
+                             "unit with specified unit.")
+                else:
+                    unit = data.unit
+                data = data.value
+
+        # Quick check on the parameters if they match the requirements.
+        if (not hasattr(data, 'shape') or not hasattr(data, '__getitem__') or
+                not hasattr(data, '__array__')):
+            # Data doesn't look like a numpy array, try converting it to
+            # one.
+            data = np.array(data, subok=True, copy=False)
+
+        # Another quick check to see if what we got looks like an array
+        # rather than an object (since numpy will convert a
+        # non-numerical/non-string inputs to an array of objects).
+        if data.dtype == 'O':
+            raise TypeError("could not convert data to numpy array.")
+
+        if unit is not None:
+            unit = Unit(unit)
+
+        if copy:
+            # Data might have been copied before but no way of validating
+            # without another variable.
+            data = deepcopy(data)
+            mask = deepcopy(mask)
+            wcs = deepcopy(wcs)
+            meta = deepcopy(meta)
+            uncertainty = deepcopy(uncertainty)
+            # Actually - copying the unit is unnecessary but better safe
+            # than sorry :-)
+            unit = deepcopy(unit)
+
+        # Validate the wcs
+
+        # Store the attributes
+        self._data = data
+        self.mask = mask
+        self._wcs = wcs
+        self.meta = meta  # TODO: Make this call the setter sometime
+        self._unit = unit
+        # Call the setter for uncertainty to further check the uncertainty
+        self.uncertainty = uncertainty
+
+    def __str__(self):
+        return str(self.data)
+
+    def __repr__(self):
+        prefix = self.__class__.__name__ + '('
+        body = np.array2string(self.data, separator=', ', prefix=prefix)
+        return ''.join([prefix, body, ')'])
+
+    @property
+    def data(self):
+        """
+        `~numpy.ndarray`-like : The stored dataset.
+        """
+        return self._data
 
     @property
     def mask(self):
+        """
+        any type : Mask for the dataset, if any.
+
+        Masks should follow the ``numpy`` convention that valid data points are
+        marked by ``False`` and invalid ones with ``True``.
+        """
         return self._mask
 
     @mask.setter
     def mask(self, value):
-        if value is not None:
-            if isinstance(value, np.ndarray):
-                if value.dtype != np.bool_:
-                    raise TypeError("mask must be a boolean Numpy array")
-                else:
-                    if value.shape != self.shape:
-                        raise ValueError("dimensions of mask do not match data")
-                    else:
-                        self._mask = value
-            else:
-                raise TypeError("mask must be a Numpy array")
-        else:
-            self._mask = value
+        self._mask = value
 
     @property
-    def flags(self):
-        return self._flags
+    def unit(self):
+        """
+        `~astropy.units.Unit` : Unit for the dataset, if any.
+        """
+        return self._unit
 
-    @flags.setter
-    def flags(self, value):
-        if value is not None:
-            if isinstance(value, np.ndarray):
-                if value.shape != self.shape:
-                    raise ValueError("dimensions of flags do not match data")
-                else:
-                    self._flags = value
-            elif isinstance(value, FlagCollection):
-                if value.shape != self.shape:
-                    raise ValueError("dimensions of FlagCollection does not match data")
-                else:
-                    self._flags = value
-            else:
-                raise TypeError("flags should be a Numpy array or a FlagCollection instance")
+    @property
+    def wcs(self):
+        """
+        any type : A world coordinate system (WCS) for the dataset, if any.
+        """
+        return self._wcs
+
+    @wcs.setter
+    def wcs(self, wcs):
+        if self._wcs is not None and wcs is not None:
+            raise ValueError("You can only set the wcs attribute with a WCS if no WCS is present.")
+
+        if wcs is None or isinstance(wcs, BaseHighLevelWCS):
+            self._wcs = wcs
+        elif isinstance(wcs, BaseLowLevelWCS):
+            self._wcs = HighLevelWCSWrapper(wcs)
         else:
-            self._flags = value
+            raise TypeError("The wcs argument must implement either the high or"
+                            " low level WCS API.")
 
     @property
     def uncertainty(self):
+        """
+        any type : Uncertainty in the dataset, if any.
+
+        Should have an attribute ``uncertainty_type`` that defines what kind of
+        uncertainty is stored, such as ``'std'`` for standard deviation or
+        ``'var'`` for variance. A metaclass defining such an interface is
+        `~astropy.nddata.NDUncertainty` but isn't mandatory.
+        """
         return self._uncertainty
 
     @uncertainty.setter
     def uncertainty(self, value):
         if value is not None:
+            # There is one requirements on the uncertainty: That
+            # it has an attribute 'uncertainty_type'.
+            # If it does not match this requirement convert it to an unknown
+            # uncertainty.
+            if not hasattr(value, 'uncertainty_type'):
+                log.info('uncertainty should have attribute uncertainty_type.')
+                value = UnknownUncertainty(value, copy=False)
+
+            # If it is a subclass of NDUncertainty we must set the
+            # parent_nddata attribute. (#4152)
             if isinstance(value, NDUncertainty):
-                self._uncertainty = value
-                self._uncertainty.parent_nddata = self
-            else:
-                raise TypeError("Uncertainty must be an instance of a NDUncertainty object")
-        else:
-            self._uncertainty = value
-
-    @property
-    def meta(self):
-        return self._meta
-
-    @meta.setter
-    def meta(self, value):
-        if value is None:
-            self._meta = OrderedDict()
-        else:
-            try:
-                self._meta = OrderedDict(value)
-            except ValueError:
-                raise TypeError('NDData meta attribute must be dict-like')
-
-    @property
-    def unit(self):
-        return self._unit
-
-    @unit.setter
-    def unit(self, value):
-        if value is None:
-            self._unit = None
-        else:
-            self._unit = Unit(value)
-
-    @property
-    def shape(self):
-        """
-        shape tuple of this object's data.
-        """
-        return self.data.shape
-
-    @property
-    def size(self):
-        """
-        integer size of this object's data.
-        """
-        return self.data.size
-
-    @property
-    def dtype(self):
-        """
-        `numpy.dtype` of this object's data.
-        """
-        return self.data.dtype
-
-    @property
-    def ndim(self):
-        """
-        integer dimensions of this object's data
-        """
-        return self.data.ndim
-
-    def __array__(self):
-        """
-        This allows code that requests a Numpy array to use an NDData
-        object as a Numpy array.
-        """
-        if self.mask is not None:
-            return np.ma.masked_array(self.data, self.mask)
-        else:
-            return self.data
-
-    def __getitem__(self, item):
-
-        new_data = self.data[item]
-
-        if self.uncertainty is not None:
-            new_uncertainty = self.uncertainty[item]
-        else:
-            new_uncertainty = None
-
-        if self.mask is not None:
-            new_mask = self.mask[item]
-        else:
-            new_mask = None
-
-        if self.flags is not None:
-            if isinstance(self.flags, np.ndarray):
-                new_flags = self.flags[item]
-            elif isinstance(self.flags, FlagCollection):
-                raise NotImplementedError('Slicing complex Flags is currently not implemented')
-        else:
-            new_flags = None
-
-        if self.wcs is not None:
-            raise NotImplementedError('Slicing for WCS is not currently implemented')
-        else:
-            new_wcs = None
-
-        return self.__class__(new_data, uncertainty=new_uncertainty, mask=new_mask, flags=new_flags, wcs=new_wcs,
-            meta=self.meta, unit=self.unit)
-
-    def _arithmetic(self, operand, propagate_uncertainties, name, operation):
-        """
-        {name} another dataset (`operand`) to this dataset.
-
-        Parameters
-        ----------
-        operand : `~astropy.nddata.NDData`
-            The second operand in the operation a {operator} b
-        propagate_uncertainties : bool
-            Whether to propagate uncertainties following the propagation rules
-            defined by the class used for the `uncertainty` attribute.
-
-        Returns
-        -------
-        result : `~astropy.nddata.NDData`
-            The resulting dataset
-
-        Notes
-        -----
-        This method requires the datasets to have identical WCS properties,
-        equivalent units, and identical shapes. Flags and meta-data get set to
-        None in the resulting dataset. The unit in the result is the same as
-        the unit in `self`. Uncertainties are propagated, although correlated
-        errors are not supported by any of the built-in uncertainty classes.
-        If uncertainties are assumed to be correlated, a warning is issued by
-        default (though this can be disabled via the
-        `WARN_UNSUPPORTED_CORRELATED` configuration item). Values masked in
-        either dataset before the operation are masked in the resulting
-        dataset.
-        """
-        if self.wcs != operand.wcs:
-            raise ValueError("WCS properties do not match")
-
-        if not (self.unit is None and operand.unit is None):
-            if (self.unit is None or operand.unit is None
-                or not self.unit.is_equivalent(operand.unit)):
-                raise ValueError("operand units do not match")
-
-        if self.shape != operand.shape:
-            raise ValueError("operand shapes do not match")
-
-        if self.unit is not None:
-            operand_data = operand.unit.to(self.unit, operand.data)
-        else:
-            operand_data = operand.data
-        data = operation(self.data, operand_data)
-        result = self.__class__(data)  # in case we are dealing with an inherited type
-
-        if propagate_uncertainties is None:
-            result.uncertainty = None
-        elif self.uncertainty is None and operand.uncertainty is None:
-            result.uncertainty = None
-        elif self.uncertainty is None:
-            result.uncertainty = operand.uncertainty
-        elif operand.uncertainty is None:
-            result.uncertainty = self.uncertainty
-        else:  # both self and operand have uncertainties
-            if WARN_UNSUPPORTED_CORRELATED() and \
-               (not self.uncertainty.support_correlated or \
-               not operand.uncertainty.support_correlated):
-                log.info("The uncertainty classes used do not support the "
-                         "propagation of correlated errors, so uncertainties"
-                         " will be propagated assuming they are uncorrelated")
-            try:
-                method = getattr(self.uncertainty, propagate_uncertainties)
-                result.uncertainty = method(operand, result.data)
-            except IncompatibleUncertaintiesException:
-                raise IncompatibleUncertaintiesException(
-                    "Cannot propagate uncertainties of type {0:s} with uncertainties of "
-                    "type {1:s} for {2:s}".format(
-                        self.uncertainty.__class__.__name__,
-                        operand.uncertainty.__class__.__name__,
-                        name))
-
-        if self.mask is None and operand.mask is None:
-            result.mask = None
-        elif self.mask is None:
-            result.mask = operand.mask
-        elif operand.mask is None:
-            result.mask = self.mask
-        else:  # combine masks as for Numpy masked arrays
-            result.mask = self.mask & operand.mask
-
-        result.flags = None
-        result.wcs = self.wcs
-        result.meta = None
-        result.unit = self.unit
-
-        return result
-
-    def add(self, operand, propagate_uncertainties=True):
-        if propagate_uncertainties:
-            propagate_uncertainties = "propagate_add"
-        else:
-            propagate_uncertainties = None
-        return self._arithmetic(
-            operand, propagate_uncertainties, "addition", np.add)
-    add.__doc__ = _arithmetic.__doc__.format(name="Add", operator="+")
-
-    def subtract(self, operand, propagate_uncertainties=True):
-        if propagate_uncertainties:
-            propagate_uncertainties = "propagate_subtract"
-        else:
-            propagate_uncertainties = None
-        return self._arithmetic(
-            operand, propagate_uncertainties, "subtraction", np.subtract)
-    subtract.__doc__ = _arithmetic.__doc__.format(name="Subtract", operator="-")
-
-    def multiply(self, operand, propagate_uncertainties=True):
-        if propagate_uncertainties:
-            propagate_uncertainties = "propagate_multiply"
-        else:
-            propagate_uncertainties = None
-        return self._arithmetic(
-            operand, propagate_uncertainties, "multiplication", np.multiply)
-    multiply.__doc__ = _arithmetic.__doc__.format(name="Multiply", operator="*")
-
-    def divide(self, operand, propagate_uncertainties=True):
-        if propagate_uncertainties:
-            propagate_uncertainties = "propagate_divide"
-        else:
-            propagate_uncertainties = None
-        return self._arithmetic(
-            operand, propagate_uncertainties, "division", np.divide)
-    divide.__doc__ = _arithmetic.__doc__.format(name="Divide", operator="/")
-
-    def convert_unit_to(self, unit, equivalencies=[]):
-        """
-        Returns a new `NDData` object whose values have been converted
-        to a new unit.
-
-        Parameters
-        ----------
-        unit : `astropy.units.UnitBase` instance or str
-            The unit to convert to.
-
-        equivalencies : list of equivalence pairs, optional
-           A list of equivalence pairs to try if the units are not
-           directly convertible.  See :ref:`unit_equivalencies`.
-
-        Returns
-        -------
-        result : `~astropy.nddata.NDData`
-            The resulting dataset
-
-        Raises
-        ------
-        UnitsException
-            If units are inconsistent.
-        """
-        if self.unit is None:
-            raise ValueError("No unit specified on source data")
-        data = self.unit.to(unit, self.data, equivalencies=equivalencies)
-        result = self.__class__(data)  # in case we are dealing with an inherited type
-
-        result.uncertainty = self.uncertainty
-        result.mask = self.mask
-        result.flags = None
-        result.wcs = self.wcs
-        result.meta = self.meta
-        result.unit = unit
-
-        return result
-
-    read = classmethod(io_registry.read)
-    write = io_registry.write
+                # In case the uncertainty already has a parent create a new
+                # instance because we need to assume that we don't want to
+                # steal the uncertainty from another NDData object
+                if value._parent_nddata is not None:
+                    value = value.__class__(value, copy=False)
+                # Then link it to this NDData instance (internally this needs
+                # to be saved as weakref but that's done by NDUncertainty
+                # setter).
+                value.parent_nddata = self
+        self._uncertainty = value
