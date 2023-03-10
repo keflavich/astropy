@@ -123,6 +123,10 @@ class SlicedLowLevelWCS(BaseWCSWrapper):
     def __init__(self, wcs, slices):
         slices = sanitize_slices(slices, wcs.pixel_n_dim)
 
+        # use the low-level wcs if given a high-lev
+        if hasattr(wcs, 'low_level_wcs'):
+            wcs = wcs.low_level_wcs
+
         if isinstance(wcs, SlicedLowLevelWCS):
             # Here we combine the current slices with the previous slices
             # to avoid ending up with many nested WCSes
