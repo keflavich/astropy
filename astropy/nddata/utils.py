@@ -142,7 +142,7 @@ def overlap_slices(
     ]
 
     for e_max in indices_max:
-        if e_max < 0 or (e_max == 0 and small_array_shape != (0, 0)):
+        if e_max < 0 or (e_max == 0 and tuple(small_array_shape) != (0, 0)):
             raise NoOverlapError("Arrays do not overlap.")
     for e_min, large_shape in zip(indices_min, large_array_shape):
         if e_min >= large_shape:
