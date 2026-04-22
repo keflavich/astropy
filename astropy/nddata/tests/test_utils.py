@@ -131,6 +131,36 @@ def test_slices_edges():
     assert slc_sm[1].start == slc_sm[1].stop == 0
 
 
+@pytest.mark.parametrize(
+    "small_array_shape",
+    [
+        (15, 15),
+        [15, 15],
+        np.array([15, 15]),
+    ],
+)
+def test_slices_small_array_shape_container(small_array_shape):
+    """
+    ``small_array_shape`` may be a tuple, list, or ndarray; the function
+    should behave identically for all three.
+
+    Regression test: a position placed at exactly ``-small_shape/2``
+    causes ``e_max`` to evaluate to 0 on that axis, which triggered an
+    internal ``small_array_shape != (0, 0)`` comparison.  When the caller
+    passed an ndarray for ``small_array_shape`` (which was happening in
+    photutils IterativePSFPhotometry) that comparison returned an ndarray and
+    raised
+    ``ValueError: The truth value of an array with more than one element is
+    ambiguous`` instead of the documented and expected ``NoOverlapError``.
+    """
+    # position chosen so that idx_max == 0 along axis 0 (stamp's far edge
+    # lands exactly on pixel 0 of the large array) -- the branch that
+    # triggers the ambiguous-truth bug for ndarray input.
+    position = (-15 / 2.0, 50.0)
+    with pytest.raises(NoOverlapError, match=".*Arrays do not overlap.*"):
+        overlap_slices((100, 100), small_array_shape, position, mode="trim")
+
+
 def test_slices_overlap_wrong_mode():
     """Call overlap_slices with non-existing mode."""
     with pytest.raises(ValueError, match="^Mode can be only.*"):
